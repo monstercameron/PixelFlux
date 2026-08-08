@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Unit tests for the parts of PixelFlux where a silent regression would be expensive and
+    invisible: revision reconciliation, hashing, metadata parsing, and job claiming.
+
+    Tests never touch a real model, a real bucket, or the user's photo library — fixtures
+    generate their own images and use a temp-directory object store.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>PixelFlux.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Test methods do not need XML docs. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI.Managed" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PixelFlux.Core\PixelFlux.Core.csproj" />
+    <ProjectReference Include="..\..\src\PixelFlux.Storage\PixelFlux.Storage.csproj" />
+    <ProjectReference Include="..\..\src\PixelFlux.Ai\PixelFlux.Ai.csproj" />
+  </ItemGroup>
+
+</Project>

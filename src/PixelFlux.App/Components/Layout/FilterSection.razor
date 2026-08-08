@@ -1,0 +1,80 @@
+@*
+    One collapsible group in the filter panel.
+
+    Collapsible because a real library has more camera bodies and folders than fit on screen at
+    once, and a panel that needs scrolling past six sections to reach the seventh is worse than
+    no panel.
+
+    Sections start CLOSED. Open, this panel put roughly eighty rows of "label ......... number"
+    down the left-hand third of the window, and a right-aligned column of eighty numbers reads as
+    a ledger — it demands to be read, and it was competing with the photographs for attention in
+    an application whose entire job is showing photographs. Closed, the same panel is seven
+    section names: the structure is still visible, nothing is hidden, and one click brings any of
+    it back.
+
+    A section holding an active filter opens itself, because a filter you cannot see is a filter
+    you cannot turn off.
+*@
+
+<section class="fsection @(_open ? "open" : null)">
+    <button type="button"
+            class="fsection-head"
+            aria-expanded="@(_open ? "true" : "false")"
+            @onclick="Toggle">
+        <span class="caret" aria-hidden="true">@(_open ? "▾" : "▸")</span>
+        <span class="t">@Title</span>
+        @if (Count > 0)
+        {
+            <span class="n">@Count</span>
+        }
+    </button>
+
+    @if (_open)
+    {
+        <div class="fsection-body">
+            @ChildContent
+        </div>
+    }
+</section>
+
+@code {
+    /// <summary>Section heading.</summary>
+    [Parameter, EditorRequired]
+    public string Title { get; set; } = string.Empty;
+
+    /// <summary>How many distinct values this section offers. Zero hides the badge.</summary>
+    [Parameter]
+    public int Count { get; set; }
+
+    /// <summary>The rows in the section.</summary>
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    /// <summary>Whether this section holds a filter that is currently applied.</summary>
+    /// <remarks>
+    /// Such a section opens itself and stays open. The alternative — a narrowed library with the
+    /// reason folded away behind a closed door — is the worst state this panel can be in.
+    /// </remarks>
+    [Parameter]
+    public bool Active { get; set; }
+
+    private bool _open;
+    private bool _touched;
+
+    protected override void OnParametersSet()
+    {
+        // The user's own choice wins once they have made one; until then, being active is what
+        // decides. Without the guard, clearing a filter would snap the section shut under the
+        // pointer that just cleared it.
+        if (!_touched)
+        {
+            _open = Active;
+        }
+    }
+
+    private void Toggle()
+    {
+        _touched = true;
+        _open = !_open;
+    }
+}

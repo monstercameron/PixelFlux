@@ -1,0 +1,87 @@
+# ---------------------------------------------------------------- build output
+#
+# Bracketed initials because git matches case-sensitively even where Windows does not, and MSBuild
+# has produced both spellings over the years.
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+publish/
+artifacts/
+TestResults/
+*.binlog
+*.nupkg
+*.snupkg
+
+# ---------------------------------------------------------------- editors and tooling
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+
+# ---------------------------------------------------------------- models
+#
+# Every model is a file the user supplies, and none of them is ours to redistribute. Together they
+# are about two gigabytes, and their licences range from MIT to AGPL — see docs/MODELS.md, which
+# lists each one, where it comes from, and what its licence permits.
+#
+# The providers README is guidance rather than a payload, so it stays.
+/models/*
+!/models/providers/
+/models/providers/*
+!/models/providers/README.txt
+
+# And by extension, anywhere at all. The rule above guards one directory; this guards the mistake
+# of putting a model somewhere else — beside a project, in a scratch folder, wherever a download
+# defaulted to. A 1.4 GB file committed by accident cannot be taken back out of a public history
+# without rewriting it, so this is worth the redundancy.
+#
+# Note the absence of *.bin: src/PixelFlux.Core/Geo/gazetteer.bin is a committed source asset.
+*.onnx
+*.onnx.data
+*.onnx_data
+*.ort
+*.safetensors
+*.gguf
+*.pt
+*.pth
+*.tflite
+
+# ---------------------------------------------------------------- fetched ONNX Runtime natives
+#
+# 40 MB extracted from a published NuGet package by tools/fetch_runtime.py. Reproducible, so it is
+# fetched rather than committed. Runtime.targets is source and must stay.
+/runtime/**/*.dll
+
+# ---------------------------------------------------------------- the test corpus
+#
+# 132 photographs, about 90 MB, downloaded from Wikimedia Commons by tools/fetch_test_album.py and
+# tools/fetch_people_set.py. Not committed for two reasons: it is large, and the photographs are
+# other people's work under a spread of Creative Commons terms. Reproducing it from a script keeps
+# the attribution with the source rather than asking this repository to carry it.
+/testdata/*
+# The provenance travels even though the photographs do not: two small tab-separated files naming
+# every image, its author and its licence. Without them the fetch scripts would reproduce a corpus
+# nobody could attribute.
+!/testdata/album/
+/testdata/album/*
+!/testdata/album/ATTRIBUTION.tsv
+!/testdata/people/
+/testdata/people/*
+!/testdata/people/ATTRIBUTION.tsv
+
+# ---------------------------------------------------------------- local library data
+#
+# A real library lives in %LOCALAPPDATA%\PixelFlux and never belongs here, but a stray copy made
+# while debugging would carry somebody's actual photographs and the descriptions written about
+# them. Ignored so that cannot happen by accident.
+*.db
+*.db-wal
+*.db-shm
+/cache/
+
+# Python bytecode from the tools/ scripts.
+__pycache__/
+*.pyc

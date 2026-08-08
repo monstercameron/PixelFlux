@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PixelFlux.Storage — the shared bus.
+
+    PixelFlux has no server. Devices coordinate by reading and writing objects in a location
+    they all see: a synchronised folder (OneDrive/Dropbox/Syncthing/SMB) or an S3-compatible
+    bucket. This project is that abstraction and nothing else, which is why it has no
+    dependency on Core: storage must not know what a photo is.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>PixelFlux.Storage</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.S3" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PixelFlux.Tests" />
+  </ItemGroup>
+
+</Project>

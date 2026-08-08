@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PixelFlux.Ai/PixelFlux.Ai.csproj" />
+    <Project Path="src/PixelFlux.App/PixelFlux.App.csproj" />
+    <Project Path="src/PixelFlux.Core/PixelFlux.Core.csproj" />
+    <Project Path="src/PixelFlux.Storage/PixelFlux.Storage.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PixelFlux.Tests/PixelFlux.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/PixelFlux.Cli/PixelFlux.Cli.csproj" />
+  </Folder>
+</Solution>

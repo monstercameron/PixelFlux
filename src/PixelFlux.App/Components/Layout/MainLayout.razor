@@ -1,0 +1,84 @@
+@inherits LayoutComponentBase
+@inject PixelFlux.Core.Localisation.Strings T
+@inject PixelFlux.App.Services.PipelineService Pipeline
+
+@*
+    The root layout exists mainly to hold the error boundary.
+
+    In MAUI Blazor Hybrid an exception thrown in a component lifecycle method reaches none of
+    the usual crash channels — not AppDomain.UnhandledException, not the WinUI handler, not the
+    logger, not Windows Error Reporting. The renderer swallows it and the user gets a blank
+    page. An ErrorBoundary at the layout root is the only seam that receives them, so it is
+    here from the first commit rather than added after the first silent failure.
+
+    In DEBUG the exception is shown in full, because during development a stack trace on screen
+    is worth more than a tidy message. In RELEASE it is deliberately generic: exception text in
+    this application can quote file paths and photo captions.
+*@
+
+<ErrorBoundary @ref="_boundary">
+    <ChildContent>
+        @Body
+    </ChildContent>
+    <ErrorContent Context="error">
+        <div class="crash" role="alert">
+            <h2>@T["crash.title"]</h2>
+            <p>@T["crash.body"]</p>
+            <button class="btn btn-primary" @onclick="Recover">@T["crash.reload"]</button>
+            @if (ShowDetail)
+            {
+                <pre>@error.ToString()</pre>
+            }
+        </div>
+    </ErrorContent>
+</ErrorBoundary>
+
+@code {
+    private ErrorBoundary? _boundary;
+
+    // Evaluated in C# rather than with a preprocessor directive in the markup: Razor compiles
+    // markup into a render tree, and #if around markup lines behaves inconsistently across
+    // SDK versions. A const bool is unambiguous and gets folded away in Release just the same.
+    private const bool ShowDetail =
+#if DEBUG
+        true;
+#else
+        false;
+#endif
+
+    private void Recover() => _boundary?.Recover();
+
+    /// <summary>
+    /// Starts the analysis queue once, here, because the layout is the one component that exists
+    /// on every route.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not in the gallery, which would leave the queue stopped for anybody who opened the faces
+    /// page first, and not in the composition root, where a slow first tick would sit between the
+    /// user and their window.
+    /// </para>
+    /// <para>
+    /// Deliberately not awaited into the render. Starting reconciles the queue against the library
+    /// and adopts work the old sweeps already did, which on a large library is a second or two of
+    /// database writes — and a layout that waits for it is a blank window that waits for it. If it
+    /// throws, the library still opens; the queue simply does not run, which is the correct
+    /// failure for a background nicety.
+    /// </para>
+    /// </remarks>
+    protected override void OnInitialized() => _ = StartQueueAsync();
+
+    private async Task StartQueueAsync()
+    {
+        try
+        {
+            await Pipeline.StartAsync();
+        }
+        catch (Exception)
+        {
+            // Swallowed on purpose, and only here. PipelineService logs its own failures; the
+            // ErrorBoundary above is for exceptions that should stop the page, and this is not
+            // one of them.
+        }
+    }
+}

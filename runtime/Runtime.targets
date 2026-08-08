@@ -1,0 +1,61 @@
+<Project>
+
+  <!--
+    Replaces the ONNX Runtime native that the NuGet package copies into the output.
+
+    Why: the package's win-arm64 build has no execution provider compiled into it. Probe it and
+    GetAvailableProviders() answers Azure and CPU, nothing else. The packages that do have one
+    (.DirectML, .Qnn) stopped at 1.24.4 while the vision model's GenAI layer needs 1.28 or newer,
+    so taking them means giving up the vision model. Windows ML ships its own runtime built with
+    providers, and — measured on 2026-08-08 — the managed 1.28 binding, GenAI 0.15.2 and the Qwen
+    model all load against it happily. So this copies that one over the top.
+
+    Two destinations, because .NET has two native layouts and PixelFlux uses both. A project with
+    no RuntimeIdentifier keeps natives in runtimes/<rid>/native/ and picks at load time; one with a
+    RuntimeIdentifier (the application) flattens them into the output root. Getting only the first
+    right is why the first attempt silently did nothing: the files copied, and to a folder the
+    application does not read.
+
+    AfterTargets is the copy step rather than Build, because the package's own copy happens during
+    build and an earlier target would be quietly undone.
+
+    Empty folder means this does nothing and everything runs on the processor, which is the correct
+    behaviour for a checkout where nobody has run tools/fetch_runtime.py.
+  -->
+
+  <ItemGroup>
+    <PixelFluxRuntimeArm64 Include="$(MSBuildThisFileDirectory)win-arm64/*.dll" />
+    <PixelFluxRuntimeX64 Include="$(MSBuildThisFileDirectory)win-x64/*.dll" />
+  </ItemGroup>
+
+  <Target Name="PixelFluxOverrideOnnxRuntime"
+          AfterTargets="CopyFilesToOutputDirectory"
+          Condition="'@(PixelFluxRuntimeArm64)' != '' Or '@(PixelFluxRuntimeX64)' != ''">
+
+    <!-- The runtimes/ layout, used when the project has no RuntimeIdentifier. -->
+    <Copy SourceFiles="@(PixelFluxRuntimeArm64)"
+          DestinationFolder="$(OutDir)runtimes/win-arm64/native"
+          SkipUnchangedFiles="true"
+          Condition="'@(PixelFluxRuntimeArm64)' != '' And Exists('$(OutDir)runtimes/win-arm64/native')" />
+
+    <Copy SourceFiles="@(PixelFluxRuntimeX64)"
+          DestinationFolder="$(OutDir)runtimes/win-x64/native"
+          SkipUnchangedFiles="true"
+          Condition="'@(PixelFluxRuntimeX64)' != '' And Exists('$(OutDir)runtimes/win-x64/native')" />
+
+    <!-- The flattened layout, used when the project targets one runtime identifier. -->
+    <Copy SourceFiles="@(PixelFluxRuntimeArm64)"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true"
+          Condition="'$(RuntimeIdentifier)' == 'win-arm64' And '@(PixelFluxRuntimeArm64)' != ''" />
+
+    <Copy SourceFiles="@(PixelFluxRuntimeX64)"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true"
+          Condition="'$(RuntimeIdentifier)' == 'win-x64' And '@(PixelFluxRuntimeX64)' != ''" />
+
+    <Message Importance="normal"
+             Text="PixelFlux: swapped in the Windows ML ONNX Runtime native (execution providers available)." />
+  </Target>
+
+</Project>

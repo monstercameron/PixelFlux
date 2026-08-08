@@ -1,0 +1,105 @@
+@using PixelFlux.Core.Index
+@inject Strings T
+
+@*
+    THE SELECTION BAR
+
+    Appears only when something is selected, and states plainly how many. The actions differ by
+    where you are, and that difference is the whole point:
+
+      * viewing the whole library — "Add to album", because the photo is not leaving anywhere
+      * viewing an album         — also "Move to album" and "Remove from this album", because
+                                   now there is somewhere to leave
+
+    Offering "Move" while browsing All photos would be a lie: there is no source to move out of.
+*@
+
+<div class="selbar" role="toolbar" aria-label="@T.Format("select.count", Count)">
+    <span class="selbar-count">@T.Format("select.count", Count)</span>
+
+    <span class="spacer"></span>
+
+    @if (Albums.Count > 0)
+    {
+        <label class="selbar-pick">
+            <span class="label">@T["select.addTo"]</span>
+            <select value="" @onchange="e => Dispatch(e, move: false)" aria-label="@T["select.addTo"]">
+                <option value="">—</option>
+                @foreach (PhotoCollection album in Albums.Where(a => a.Id != CurrentAlbumId))
+                {
+                    <option value="@album.Id">@album.Name</option>
+                }
+            </select>
+        </label>
+
+        @if (CurrentAlbumId is not null)
+        {
+            <label class="selbar-pick">
+                <span class="label">@T["select.moveTo"]</span>
+                <select value="" @onchange="e => Dispatch(e, move: true)" aria-label="@T["select.moveTo"]">
+                    <option value="">—</option>
+                    @foreach (PhotoCollection album in Albums.Where(a => a.Id != CurrentAlbumId))
+                    {
+                        <option value="@album.Id">@album.Name</option>
+                    }
+                </select>
+            </label>
+        }
+    }
+
+    @if (CurrentAlbumId is not null)
+    {
+        <button type="button" class="btn" @onclick="() => OnRemove.InvokeAsync()">
+            @T["select.removeFrom"]
+        </button>
+    }
+
+    <button type="button" class="btn" @onclick="() => OnClear.InvokeAsync()">@T["select.clear"]</button>
+</div>
+
+@code {
+    /// <summary>How many photos are selected.</summary>
+    [Parameter, EditorRequired]
+    public int Count { get; set; }
+
+    /// <summary>Albums available as targets.</summary>
+    [Parameter]
+    public IReadOnlyList<PhotoCollection> Albums { get; set; } = [];
+
+    /// <summary>The album currently being viewed, or null for the whole library.</summary>
+    [Parameter]
+    public long? CurrentAlbumId { get; set; }
+
+    /// <summary>Raised to add the selection to an album.</summary>
+    [Parameter]
+    public EventCallback<long> OnAddTo { get; set; }
+
+    /// <summary>Raised to move the selection from the current album into another.</summary>
+    [Parameter]
+    public EventCallback<long> OnMoveTo { get; set; }
+
+    /// <summary>Raised to remove the selection from the album being viewed.</summary>
+    [Parameter]
+    public EventCallback OnRemove { get; set; }
+
+    /// <summary>Raised to clear the selection.</summary>
+    [Parameter]
+    public EventCallback OnClear { get; set; }
+
+    private async Task Dispatch(ChangeEventArgs args, bool move)
+    {
+        if (!long.TryParse(args.Value?.ToString(), out long albumId))
+        {
+            return;   // the "—" placeholder
+        }
+
+        if (move)
+        {
+            await OnMoveTo.InvokeAsync(albumId);
+        }
+        else
+        {
+            await OnAddTo.InvokeAsync(albumId);
+        }
+    }
+}

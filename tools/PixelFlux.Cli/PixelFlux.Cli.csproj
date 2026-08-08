@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A headless driver for the library: import, search, sort, facets, collections.
+
+    Exists for two reasons. Developing search against a GUI means launching a window, stealing
+    focus, and clicking — slow, and disruptive on a machine someone is using. And a photo
+    manager genuinely wants a bulk-import path that is not a file dialog.
+
+    Everything here is a thin shell over PixelFlux.Core. It must never contain logic the app
+    does not also use, or the two will drift and the CLI will stop being evidence about the app.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>PixelFlux.Cli</RootNamespace>
+    <AssemblyName>pixelflux</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- A console tool's Program class is not a public API surface. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\PixelFlux.Core\PixelFlux.Core.csproj" />
+    <ProjectReference Include="..\..\src\PixelFlux.Ai\PixelFlux.Ai.csproj" />
+  </ItemGroup>
+
+  <!-- Swaps in an ONNX Runtime native that has execution providers compiled in. -->
+  <Import Project="../../runtime/Runtime.targets" />
+
+</Project>

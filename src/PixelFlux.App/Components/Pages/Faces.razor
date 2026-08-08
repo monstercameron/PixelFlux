@@ -1,0 +1,908 @@
+@page "/faces"
+@using System.Globalization
+@using PixelFlux.App.Services
+@using PixelFlux.Ai.Faces
+@using PixelFlux.Core.Index
+@using PixelFlux.Core.Model
+@inject LibraryService Library
+@inject Strings T
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+@implements IDisposable
+
+@*
+    Every face in the library, on one wall.
+
+    TWO LEVELS
+    ----------
+    The wall shows ONE CARD PER PERSON by default, not one per face. A library holding eleven
+    frames of one sitting produced eleven near-identical cards, which is the contact sheet again
+    rather than an index of who is in your photographs. Faces are collapsed by appearance and the
+    card carries how many photographs the person turns up in. "Every face" is still one control
+    away, because sometimes the question really is "what did the detector find". Clicking one drills into THIS PERSON: every
+    photograph holding a face close enough to the one that was clicked, most alike first.
+
+    Nobody is named, and nothing is stored about who anybody is. "This person" means "faces whose
+    vectors are near this vector", and the page says so — the caution line under the person bar
+    is not boilerplate, it is the honest description of what the match is. That is also why each
+    result carries its own similarity: a match at 0.95 and a match at 0.42 are different claims,
+    and the user is the one who decides whether the second one is right.
+
+    The wall also shows which faces came from the same PHOTOGRAPH, which is a fact rather than an
+    inference, so cards from one photograph carry their position in it and light up together when
+    any of them is pointed at.
+*@
+
+<div class="shell @(T.IsRightToLeft ? "rtl" : null)" dir="@(T.IsRightToLeft ? "rtl" : "ltr")"
+     @onkeydown="OnShellKey" tabindex="-1">
+
+    <header class="topbar">
+        <div class="wordmark" dir="ltr"><b>Pixel</b><i>Flux</i></div>
+
+        <ViewSwitch Current="faces" Count="_total" />
+
+        <span class="spacer"></span>
+
+        <div class="tools">
+            @if (_person is not null)
+            {
+                <label class="sortpick">
+                    <span class="label">@T["person.match"]</span>
+                    <select value="@_threshold.ToString(CultureInfo.InvariantCulture)"
+                            @onchange="OnThresholdChanged"
+                            aria-label="@T["person.match"]">
+                        @foreach ((double value, string key) in MatchOptions)
+                        {
+                            <option value="@value.ToString(CultureInfo.InvariantCulture)">@T[key]</option>
+                        }
+                    </select>
+                </label>
+
+                <span class="tool-sep"></span>
+            }
+
+            @* Rendered conditionally rather than hidden. The `hidden` attribute is only a UA
+               stylesheet rule — `[hidden] { display: none }` — and .sortpick sets display:flex,
+               which is more specific and wins. The controls stayed on screen while claiming to
+               be hidden, sorting a list that was no longer showing. *@
+            @if (_person is null && Library.FaceMatchingAvailable)
+            {
+                <label class="sortpick">
+                    <span class="label">@T["faces.show"]</span>
+                    <select value="@(_grouped ? "1" : "0")" @onchange="OnGroupedChanged"
+                            aria-label="@T["faces.show"]">
+                        <option value="1">@T["faces.show.people"]</option>
+                        <option value="0">@T["faces.show.all"]</option>
+                    </select>
+                </label>
+
+                <span class="tool-sep"></span>
+            }
+
+            @if (_person is null)
+            {
+                <label class="sortpick">
+                    <span class="label">@T["faces.order"]</span>
+                    <select value="@((int)_order)" @onchange="OnOrderChanged" aria-label="@T["faces.order"]">
+                        @foreach ((FaceOrder value, string key) in OrderOptions)
+                        {
+                            <option value="@((int)value)">@T[key]</option>
+                        }
+                    </select>
+                </label>
+
+                <span class="tool-sep"></span>
+
+                <label class="sortpick">
+                    <span class="label">@T["faces.confidence"]</span>
+                    <select value="@_minConfidence.ToString(CultureInfo.InvariantCulture)"
+                            @onchange="OnConfidenceChanged"
+                            aria-label="@T["faces.confidence"]">
+                        @foreach ((double value, string key) in ConfidenceOptions)
+                        {
+                            <option value="@value.ToString(CultureInfo.InvariantCulture)">@T[key]</option>
+                        }
+                    </select>
+                </label>
+            }
+
+            <span class="tool-sep"></span>
+
+            <label class="sortpick lang">
+                <span class="label">@T["language"]</span>
+                <select value="@T.Current.Code" @onchange="OnLanguageChanged" aria-label="@T["language"]">
+                    @foreach (Strings.Language language in Strings.Available)
+                    {
+                        <option value="@language.Code">@language.NativeName</option>
+                    }
+                </select>
+            </label>
+
+            <button class="btn btn-primary" @onclick="Sweep" disabled="@(_sweeping || !Library.FaceDetectionAvailable)">
+                @(_sweeping ? T["faces.scanning"] : _total > 0 ? T["faces.rescan"] : T["faces.scan"])
+            </button>
+        </div>
+    </header>
+
+    <div class="body plain">
+        <main class="sheet">
+            <div class="sheet-head">
+                <h1>@T["faces.title"]</h1>
+                <span class="sub mono">@CountLine</span>
+            </div>
+
+            @if (_person is { } chosen)
+            {
+                <div class="personbar">
+                    <button type="button" class="btn" @onclick="ClearPerson">
+                        @* The arrow follows the reading direction: "back" is leftwards in
+                           English and rightwards in Arabic. A hard-coded \u2190 points forwards on
+                           half the languages this app ships in. *@
+                        <span aria-hidden="true">@(T.IsRightToLeft ? "→" : "←")</span>
+
+                        @T["person.back"]
+                    </button>
+
+                    <img class="personface"
+                         src="@LibraryService.DerivativeUrl(chosen.CropKey)"
+                         alt="@T["person.thisOne"]" />
+
+                    <div class="personwho">
+                        <h2>@T["person.title"]</h2>
+                        <span class="sub mono">@PersonCount</span>
+                    </div>
+
+                    <span class="spacer"></span>
+
+                    @* Stated on the surface that makes the claim, not in a settings screen. The
+                       page is asserting that these are one person; the limits of that assertion
+                       belong next to it. *@
+                    <span class="caution">@T["person.caution"]</span>
+                </div>
+
+                @if (_matches.Count == 1)
+                {
+                    @* Said as a note, not as an empty state. The route is always the same —
+                       every face, then a person, then their photographs, then the viewer — and
+                       a person with one photograph still has a photograph. Replacing the grid
+                       with "only this one photo" ended the journey a step early and left the
+                       single result unreachable. *@
+                    <p class="lonely">@T["person.none.body"]</p>
+                }
+
+                @* Photographs, not crops. The question this view answers is "where else does
+                       this person appear", and the answer is a set of pictures — the crop is only
+                       how you got here. Each one still carries its face inset and score so the
+                       match can be judged without opening anything. *@
+                    <div class="grid" style="--cell:200px"
+                         role="grid"
+                         aria-label="@T["person.title"]"
+                         @ref="_wallElement"
+                         @onkeydown="OnWallKey">
+                        @foreach ((FaceMatch match, int index) in _matches.Select((m, i) => (m, i)))
+                        {
+                            int i = index;
+                            FaceListing item = match.Listing;
+
+                            <button type="button"
+                                    class="frame @(_focus == i ? "focused" : null)"
+                                    role="gridcell"
+                                    tabindex="@(_focus == i ? 0 : -1)"
+                                    title="@item.PhotoFileName"
+                                    @onfocus="() => _focus = i"
+                                    @onclick="() => OpenMatch(i)">
+                                <img src="@LibraryService.DerivativeUrl(item.PhotoThumbnailKey)"
+                                     alt="@item.PhotoFileName"
+                                     loading="lazy"
+                                     decoding="async" />
+
+                                <img class="inset"
+                                     src="@LibraryService.DerivativeUrl(item.Face.CropKey)"
+                                     alt=""
+                                     loading="lazy" />
+
+                                @if (item.Face.Id == chosen.Id)
+                                {
+                                    @* A short word, not the full phrase. The badge sits in the
+                                       corner of a 200px cell beside the similarity chip; the
+                                       sentence "The face you picked" ran off the edge of it.
+                                       The full phrase is still the accessible name. *@
+                                    <span class="alike here" title="@T["person.thisOne"]">@T["person.picked"]</span>
+                                }
+                                else
+                                {
+                                    <span class="alike" dir="ltr">
+                                        @T.Format("person.alike",
+                                            (match.Similarity * 100).ToString("0", CultureInfo.InvariantCulture))
+                                    </span>
+                                }
+                            </button>
+                        }
+                    </div>
+            }
+            else if (!Library.FaceDetectionAvailable)
+            {
+                <div class="empty">
+                    <h2>@T["faces.nomodel.title"]</h2>
+                    <p><bdi class="mono">@T.Format("faces.nomodel.body", Library.Paths.ModelsRoot)</bdi></p>
+                </div>
+            }
+            else if (_faces.Count == 0)
+            {
+                <div class="empty">
+                    @if (_swept)
+                    {
+                        <h2>@T["faces.none.title"]</h2>
+                        <p>@T["faces.none.body"]</p>
+                    }
+                    else
+                    {
+                        <h2>@T["faces.empty.title"]</h2>
+                        <p>@T["faces.empty.body"]</p>
+                        <button class="btn btn-primary" @onclick="Sweep" disabled="@_sweeping">
+                            @(_sweeping ? T["faces.scanning"] : T["faces.scan"])
+                        </button>
+                    }
+                </div>
+            }
+            else
+            {
+                @* Roving tabindex, as in the gallery grid: one tab stop for the whole wall,
+                   arrows move within it. *@
+                <div class="facewall"
+                     id="pf-wall"
+                     role="grid"
+                     aria-label="@T["faces.title"]"
+                     tabindex="-1"
+                     @ref="_wallElement"
+                     @onkeydown="OnWallKey">
+                    @foreach ((FaceListing item, int index) in _faces.Select((f, i) => (f, i)))
+                    {
+                        int i = index;
+                        PhotoFaceRecord face = item.Face;
+                        (int position, int siblings) = _kin[i];
+                        int appears = _grouped && i < _groups.Count ? _groups[i].PhotoCount : 0;
+
+                        <button type="button"
+                                class="facecard @(_focus == i ? "focused" : null) @(_hoverPhoto == face.PhotoId && siblings > 1 ? "kin" : null)"
+                                role="gridcell"
+                                tabindex="@(_focus == i ? 0 : -1)"
+                                title="@(face.IsComparable ? T["person.find"] : T["faces.open"]) — @item.PhotoFileName"
+                                @onfocus="() => Hover(i, face.PhotoId)"
+                                @onmouseover="() => _hoverPhoto = face.PhotoId"
+                                @onmouseout="() => _hoverPhoto = null"
+                                @onclick="() => PickCard(i)">
+
+                            @if (face.CropKey is { } crop)
+                            {
+                                <img src="@LibraryService.DerivativeUrl(crop)"
+                                     alt="@T.Format("faces.inPhoto", item.PhotoFileName)"
+                                     loading="lazy"
+                                     decoding="async" />
+                            }
+                            else
+                            {
+                                @* No crop was written. The photograph's thumbnail is a poor
+                                   substitute but an honest one, and it keeps the wall from
+                                   developing holes. *@
+                                <img class="fallback"
+                                     src="@LibraryService.DerivativeUrl(item.PhotoThumbnailKey)"
+                                     alt="@T.Format("faces.inPhoto", item.PhotoFileName)"
+                                     loading="lazy"
+                                     decoding="async" />
+                            }
+
+                            @* How sure the detector was, as a bar rather than a number. On a
+                               wall of a hundred cards a percentage on each is noise; a bar
+                               that is short on two of them is legible at a glance. *@
+                            <span class="sure" aria-hidden="true">
+                                <i style="width:@((face.Confidence * 100).ToString("0.#", CultureInfo.InvariantCulture))%"></i>
+                            </span>
+
+                            @if (!face.IsComparable)
+                            {
+                                <span class="uncomparable" title="@T["person.small.title"]" aria-hidden="true">·</span>
+                            }
+
+                            @if (appears > 1)
+                            {
+                                @* How many photographs this person turns up in. It replaces the
+                                   "2 of 4" position badge in the grouped view, where position
+                                   within one photograph is not what the card is about. *@
+                                <span class="of count" dir="ltr">&#215;@appears</span>
+                            }
+                            else if (!_grouped && siblings > 1)
+                            {
+                                @* dir=ltr: "2/4" is a numeric pair, not a phrase, and must not
+                                   reorder in Arabic. *@
+                                <span class="of" dir="ltr">@position<i>/</i>@siblings</span>
+                            }
+
+                            <span class="whence">
+                                <bdi class="when mono">@item.CapturedUtc.ToLocalTime().ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)</bdi>
+                                @if (item.PlaceLabel is { Length: > 0 } place)
+                                {
+                                    <bdi class="where">@place</bdi>
+                                }
+                            </span>
+                        </button>
+                    }
+                </div>
+            }
+        </main>
+    </div>
+
+    <footer class="statusbar">
+        <span class="stat"><b>@_total</b>&nbsp;@T["faces.nav.faces"]</span>
+        <span class="stat"><b>@_photographs</b>&nbsp;@T["status.photos"]</span>
+
+        @if (_faces.Count != _total)
+        {
+            <span class="stat"><b>@_faces.Count</b>&nbsp;@T["status.shown"]</span>
+        }
+
+        <span class="spacer"></span>
+
+        @* Stated on the page, not buried in a settings screen. This is the one feature where
+           a person is entitled to know, without asking, where their data went. *@
+        <span class="stat quiet">@T["faces.privacy"]</span>
+
+        <span class="safelight @(_sweeping ? "on" : null)">
+            <span class="lamp"></span>
+            @if (_sweeping)
+            {
+                <span>@_sweepLine</span>
+            }
+            else if (_flash is { } flash)
+            {
+                <span>@flash</span>
+            }
+            else
+            {
+                <span>@T["status.idle"]</span>
+            }
+        </span>
+    </footer>
+</div>
+
+@if (_open is { } open && open < _faces.Count && _openPhoto is { } photo)
+{
+    <Viewer Photo="photo"
+            Tags="_openTags"
+            Segments="_openSegments"
+            ShowMasks="_showMasks"
+            ShowMasksChanged="v => _showMasks = v"
+            Vocabulary="_vocabulary"
+            OnPickObject="PickObject"
+            OnLabelSegment="LabelSegment"
+            OnAddTag="AddTag"
+            OnRemoveTag="RemoveTag"
+            HasPrevious="open > 0"
+            HasNext="open < CurrentPhotoIds.Count - 1"
+            OnClose="Close"
+            OnStep="Step" />
+}
+
+@code {
+    private static readonly (FaceOrder Value, string Key)[] OrderOptions =
+    [
+        (FaceOrder.Prominence, "faces.order.prominence"),
+        (FaceOrder.Newest, "faces.order.newest"),
+        (FaceOrder.Oldest, "faces.order.oldest"),
+        (FaceOrder.Confidence, "faces.order.confidence"),
+    ];
+
+    // Three steps, not a slider. A slider over a quantity nobody has an intuition for invites
+    // fiddling; three named positions say what each one is for.
+    private static readonly (double Value, string Key)[] ConfidenceOptions =
+    [
+        (0.0, "faces.confidence.all"),
+        (0.85, "faces.confidence.likely"),
+        (0.93, "faces.confidence.certain"),
+    ];
+
+    // The three named positions the match control offers. Named rather than numeric, because
+    // "0.40" means nothing to anybody and "Balanced" at least says what the choice is for.
+    private static readonly (double Value, string Key)[] MatchOptions =
+    [
+        (FaceGrouping.StrictThreshold, "person.match.strict"),
+        (FaceGrouping.DefaultThreshold, "person.match.normal"),
+        (FaceGrouping.LooseThreshold, "person.match.loose"),
+    ];
+
+    /// <summary>
+    /// Opens straight onto a person, from <c>/faces?person=51</c>.
+    /// </summary>
+    /// <remarks>
+    /// The person view is two clicks deep and the second click is on an image, so it cannot be
+    /// reached from the outside — which meant it could not be screenshotted, and a surface that
+    /// cannot be looked at is a surface that ships unlooked-at. Making it addressable fixes that
+    /// and is worth having on its own: a view worth arriving at is worth being able to return to.
+    /// </remarks>
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "person")]
+    public long? PersonFaceId { get; set; }
+
+    private IReadOnlyList<FaceListing> _faces = [];
+
+    /// <summary>The face being searched for, or null on the wall.</summary>
+    private PhotoFaceRecord? _person;
+
+    /// <summary>Everything that looks like <see cref="_person" />, most alike first.</summary>
+    private IReadOnlyList<FaceMatch> _matches = [];
+
+    private double _threshold = FaceGrouping.DefaultThreshold;
+
+    /// <summary>Whether the wall collapses faces to one card per person.</summary>
+    /// <remarks>
+    /// On by default. A faces page that repeats the same person is a worse contact sheet, and
+    /// the point of this page is the opposite question — who is in here.
+    /// </remarks>
+    private bool _grouped = true;
+
+    /// <summary>The groups behind the wall, parallel to <c>_faces</c>, empty when ungrouped.</summary>
+    private IReadOnlyList<FaceGroup> _groups = [];
+
+    /// <summary>Position and total within its photograph for each card, so it can say "2 of 4".</summary>
+    private IReadOnlyList<(int Position, int Siblings)> _kin = [];
+
+    private IReadOnlyList<string> _vocabulary = [];
+    private IReadOnlyList<PhotoTag> _openTags = [];
+    private IReadOnlyList<PhotoSegmentRecord> _openSegments = [];
+    private PhotoRecord? _openPhoto;
+
+    private FaceOrder _order = FaceOrder.Prominence;
+    private double _minConfidence;
+    private int _total;
+    private int _photographs;
+    private bool _swept;
+    private bool _sweeping;
+    private bool _showMasks;
+    private string? _sweepLine;
+    private string? _flash;
+
+    private int _focus;
+    private int? _open;
+    private long? _hoverPhoto;
+    private ElementReference _wallElement;
+    private CancellationTokenSource? _sweepCancel;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Library.LibraryChanged += OnLibraryChanged;
+        T.LanguageChanged += OnLanguageSwitched;
+        await RefreshAsync();
+
+        if (PersonFaceId is { } requested)
+        {
+            // Resolved through the same path a click takes, so a link cannot reach a state the
+            // interface cannot. A stale id simply leaves the wall showing.
+            FaceListing? listing = _faces.FirstOrDefault(f => f.Face.Id == requested);
+
+            if (listing is not null)
+            {
+                await ShowPerson(listing);
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        Library.LibraryChanged -= OnLibraryChanged;
+        T.LanguageChanged -= OnLanguageSwitched;
+        _sweepCancel?.Cancel();
+        _sweepCancel?.Dispose();
+    }
+
+    private void OnLibraryChanged() => _ = InvokeAsync(RefreshAsync);
+
+    private void OnLanguageSwitched() => _ = InvokeAsync(StateHasChanged);
+
+    private Task OnLanguageChanged(ChangeEventArgs args)
+    {
+        T.Use(args.Value?.ToString() ?? "en");
+        return Task.CompletedTask;
+    }
+
+    private string CountLine
+    {
+        get
+        {
+            if (_total == 0)
+            {
+                return string.Empty;
+            }
+
+            // Grouped, the honest headline is how many PEOPLE are in the library, not how many
+            // faces — the wall is showing one card each and a face count would not match what
+            // is on screen.
+            if (_grouped && _groups.Count > 0)
+            {
+                return T.Format("faces.people", _groups.Count, _photographs);
+            }
+
+            return _total == 1 && _photographs == 1
+                ? T["faces.countOne"]
+                : T.Format("faces.count", _total, _photographs);
+        }
+    }
+
+    private string PersonCount
+    {
+        get
+        {
+            // Photographs, not faces. Two faces of one person in a group shot is still one
+            // photograph, and a count that said "2 photos" for one picture would be wrong in
+            // the way that makes people stop trusting a number.
+            int photos = _matches.Select(m => m.Listing.Face.PhotoId).Distinct().Count();
+            return photos == 1 ? T["person.countOne"] : T.Format("person.count", photos);
+        }
+    }
+
+    /// <summary>Clicking a card: search for the person if we can, open the photograph if we cannot.</summary>
+    /// <remarks>
+    /// One click, two meanings, decided by whether the face carries a vector. That is not a
+    /// hidden mode — a face that cannot be searched for is marked on the card — and it beats the
+    /// alternative of a button that is present and does nothing.
+    /// </remarks>
+    /// <summary>Clicking a face always drills into that person.</summary>
+    /// <remarks>
+    /// One route, no exceptions: every face, then that person, then their photographs, then the
+    /// viewer. A face with no vector used to skip straight to the viewer, which meant the same
+    /// click did two different things depending on a property nobody can see, and Escape then
+    /// went somewhere different too.
+    /// </remarks>
+    private Task PickCard(int index)
+    {
+        _focus = index;
+        return ShowPerson(_faces[index]);
+    }
+
+    private async Task ShowPerson(FaceListing listing)
+    {
+        _person = listing.Face;
+        _focus = 0;
+
+        // A face too small to describe cannot be compared to anything, so the honest result is
+        // the one photograph it is in — not an error, and not an empty page.
+        _matches = listing.Face.IsComparable
+            ? await Library.FindSimilarFacesAsync(listing.Face.Id, _threshold)
+            : [new FaceMatch(listing, 1.0)];
+
+        StateHasChanged();
+    }
+
+    private void ClearPerson()
+    {
+        _person = null;
+        _matches = [];
+        _focus = 0;
+    }
+
+    private async Task OnThresholdChanged(ChangeEventArgs args)
+    {
+        if (double.TryParse(args.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture,
+                out double value) && _person is { } chosen)
+        {
+            _threshold = value;
+
+            FaceListing? still = _matches.FirstOrDefault(m => m.Listing.Face.Id == chosen.Id)?.Listing
+                                 ?? _faces.FirstOrDefault(f => f.Face.Id == chosen.Id);
+
+            if (still is not null)
+            {
+                await ShowPerson(still);
+            }
+        }
+    }
+
+    private async Task OpenMatch(int index)
+    {
+        _focus = index;
+        _open = index;
+        await LoadOpenAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        (_total, _photographs) = await Library.CountFacesAsync();
+        _vocabulary = await Library.LabelVocabularyAsync();
+        _swept = _total > 0 || _swept;
+
+        // Grouping needs vectors. A library swept before the recognition model was installed has
+        // none, so the control is hidden and the wall falls back to every face — which is what
+        // it always was, rather than an empty page.
+        bool canGroup = _grouped && Library.FaceMatchingAvailable;
+
+        if (canGroup)
+        {
+            _groups = await Library.ListPeopleAsync(_threshold, _order, _minConfidence);
+            _faces = _groups.Select(g => g.Representative).ToList();
+        }
+        else
+        {
+            _groups = [];
+            _faces = await Library.ListFacesAsync(_order, _minConfidence, 2000);
+        }
+
+        // "2 of 4" is computed from the listing, not from a stored column, so it always describes
+        // the wall actually on screen. Counting siblings in SQL and then filtering by confidence
+        // here would produce cards claiming to be one of four when only two are visible.
+        //
+        // Indexed by card, not by photograph: a photograph contributes several cards and each
+        // needs its own position, so a map keyed by photo id would hold only the last of them.
+        Dictionary<long, int> counts = _faces
+            .GroupBy(f => f.Face.PhotoId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var seen = new Dictionary<long, int>();
+        var kin = new List<(int Position, int Siblings)>(_faces.Count);
+
+        foreach (FaceListing item in _faces)
+        {
+            long id = item.Face.PhotoId;
+            seen[id] = seen.GetValueOrDefault(id) + 1;
+            kin.Add((seen[id], counts[id]));
+        }
+
+        _kin = kin;
+        StateHasChanged();
+    }
+
+    private async Task OnGroupedChanged(ChangeEventArgs args)
+    {
+        _grouped = args.Value?.ToString() == "1";
+        _focus = 0;
+        await RefreshAsync();
+    }
+
+    private async Task OnOrderChanged(ChangeEventArgs args)
+    {
+        if (int.TryParse(args.Value?.ToString(), out int value))
+        {
+            _order = (FaceOrder)value;
+            _focus = 0;
+            await RefreshAsync();
+        }
+    }
+
+    private async Task OnConfidenceChanged(ChangeEventArgs args)
+    {
+        if (double.TryParse(args.Value?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out double value))
+        {
+            _minConfidence = value;
+            _focus = 0;
+            await RefreshAsync();
+        }
+    }
+
+    /// <summary>Runs a face sweep, reporting progress into the status bar.</summary>
+    /// <remarks>
+    /// The wall is refreshed once at the end rather than as results arrive. Rebuilding a grid of
+    /// several hundred images on every photograph would spend more time laying out than detecting,
+    /// and the progress line already says the work is happening.
+    /// </remarks>
+    private async Task Sweep()
+    {
+        if (_sweeping)
+        {
+            return;
+        }
+
+        _sweeping = true;
+        _sweepCancel?.Dispose();
+        _sweepCancel = new CancellationTokenSource();
+
+        var lastPaint = 0L;
+
+        var progress = new Progress<FaceSweepProgress>(p =>
+        {
+            long now = Environment.TickCount64;
+            if (now - lastPaint < 200 && p.Done < p.Total)
+            {
+                return;
+            }
+
+            lastPaint = now;
+            _sweepLine = $"{p.Done}/{p.Total} · {p.Found}";
+            StateHasChanged();
+        });
+
+        try
+        {
+            (int examined, int found) = await Library.SweepFacesAsync(progress, _sweepCancel.Token);
+            _swept = true;
+            _flash = T.Format("faces.scanned", examined, found);
+        }
+        finally
+        {
+            _sweeping = false;
+            _sweepLine = null;
+
+            // Face ids do not survive a re-sweep — every row is replaced — so a person selected
+            // before it would now point at a face that no longer exists and quietly show nothing.
+            ClearPerson();
+            await RefreshAsync();
+        }
+    }
+
+    private void Hover(int index, long photoId)
+    {
+        _focus = index;
+        _hoverPhoto = photoId;
+    }
+
+    private async Task Open(int index)
+    {
+        _focus = index;
+        _open = index;
+        await LoadOpenAsync();
+    }
+
+    private async Task LoadOpenAsync()
+    {
+        if (_open is not { } index)
+        {
+            _openPhoto = null;
+            return;
+        }
+
+        // Whichever list is on screen. The viewer steps through what the user is looking at,
+        // not through a list they left behind two clicks ago.
+        IReadOnlyList<long> shown = CurrentPhotoIds;
+        if (index >= shown.Count)
+        {
+            _openPhoto = null;
+            return;
+        }
+
+        long photoId = shown[index];
+
+        // Fetched one at a time rather than held in the listing. The wall carries only what a
+        // card needs; the viewer wants the whole row, and there is exactly one viewer.
+        _openPhoto = await Library.GetPhotoAsync(photoId);
+
+        if (_openPhoto is not null)
+        {
+            _openTags = await Library.GetTagsAsync(photoId);
+            _openSegments = await Library.GetSegmentsAsync(photoId);
+        }
+    }
+
+    /// <summary>The photographs currently on screen, in the order they are shown.</summary>
+    private IReadOnlyList<long> CurrentPhotoIds => _person is null
+        ? _faces.Select(f => f.Face.PhotoId).ToList()
+        : _matches.Select(m => m.Listing.Face.PhotoId).ToList();
+
+    private void Close()
+    {
+        _open = null;
+        _openPhoto = null;
+        _ = JS.InvokeVoidAsync("pixelflux.focusId", "pf-wall");
+    }
+
+    private async Task Step(int delta)
+    {
+        if (_open is not { } index)
+        {
+            return;
+        }
+
+        int next = Math.Clamp(index + delta, 0, CurrentPhotoIds.Count - 1);
+        if (next != index)
+        {
+            _open = next;
+            _focus = next;
+            await LoadOpenAsync();
+        }
+    }
+
+    // ------------------------------------------------------------------------- labelling
+
+    /// <summary>
+    /// Clicking a detected object leaves the faces page for the photographs holding it.
+    /// </summary>
+    /// <remarks>
+    /// A real navigation, not a filter applied in place. The faces page answers "who is here"
+    /// and cannot answer "show me every photograph with a bicycle" — that is the contact sheet's
+    /// question, and the honest response to asking it here is to go there. The object arrives as
+    /// a query parameter so the resulting view is linkable and the back gesture means something.
+    /// </remarks>
+    private void PickObject(string label)
+    {
+        _open = null;
+        Nav.NavigateTo($"/?object={Uri.EscapeDataString(label)}");
+    }
+
+    private async Task LabelSegment((long SegmentId, string? Label) change)
+    {
+        if (_openPhoto is not { } photo)
+        {
+            return;
+        }
+
+        await Library.SetSegmentLabelAsync(change.SegmentId, change.Label);
+        _openSegments = await Library.GetSegmentsAsync(photo.Id);
+        await RefreshAsync();
+    }
+
+    private async Task AddTag(string tag)
+    {
+        if (_openPhoto is { } photo && await Library.AddUserTagAsync(photo.Id, tag))
+        {
+            _openTags = await Library.GetTagsAsync(photo.Id);
+            _flash = T.Format("label.tagged", tag);
+            StateHasChanged();
+        }
+    }
+
+    private async Task RemoveTag(string tag)
+    {
+        if (_openPhoto is { } photo && await Library.RemoveUserTagAsync(photo.Id, tag))
+        {
+            _openTags = await Library.GetTagsAsync(photo.Id);
+            _flash = T.Format("label.untagged", tag);
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Arrow-key navigation across the wall.</summary>
+    /// <remarks>
+    /// The column count comes from the browser, not from arithmetic here: the wall is an
+    /// auto-filling grid, so how many cards fit on a row is a layout result that changes with
+    /// the window. Recomputing it in C# would be reimplementing the CSS grid algorithm.
+    /// </remarks>
+    private async Task OnWallKey(KeyboardEventArgs args)
+    {
+        int count = _person is null ? _faces.Count : _matches.Count;
+        if (count == 0)
+        {
+            return;
+        }
+
+        int columns = await JS.InvokeAsync<int>("pixelflux.gridColumns", _wallElement);
+        int next = _focus;
+
+        switch (args.Key)
+        {
+            case "ArrowRight": next += T.IsRightToLeft ? -1 : 1; break;
+            case "ArrowLeft": next += T.IsRightToLeft ? 1 : -1; break;
+            case "ArrowDown": next += columns; break;
+            case "ArrowUp": next -= columns; break;
+            case "Home": next = 0; break;
+            case "End": next = count - 1; break;
+            case "Enter" or " ":
+                if (_person is null) { await PickCard(_focus); } else { await OpenMatch(_focus); }
+                return;
+            default: return;
+        }
+
+        _focus = Math.Clamp(next, 0, count - 1);
+        await JS.InvokeVoidAsync("pixelflux.revealCell", _wallElement, _focus);
+    }
+
+    /// <summary>
+    /// Escape unwinds one level at a time: the viewer, then the person, then nothing.
+    /// </summary>
+    /// <remarks>
+    /// One press should undo one thing. Closing the viewer and dropping out of the person at the
+    /// same time loses a search the user may have spent several clicks arriving at, and there is
+    /// no way to ask for the smaller step back.
+    /// </remarks>
+    private void OnShellKey(KeyboardEventArgs args)
+    {
+        if (args.Key != "Escape")
+        {
+            return;
+        }
+
+        if (_open is not null)
+        {
+            Close();
+        }
+        else if (_person is not null)
+        {
+            ClearPerson();
+        }
+    }
+}

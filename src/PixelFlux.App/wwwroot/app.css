@@ -1,0 +1,2800 @@
+/* ============================================================================================
+   PixelFlux — design system
+   ============================================================================================
+
+   THE IDEA
+   --------
+   A photo manager's oldest ancestor is the contact sheet: every frame from a roll printed at
+   thumbnail size on one sheet, frame numbers along the edge, the photographer's marks in the
+   margin. That is literally what a gallery grid is, and almost nobody builds one that way.
+   PixelFlux does. The sheet has a real margin, the frames sit in a fixed rhythm, and the edge
+   carries information rather than chrome.
+
+   The one thing this application is remembered by is the TIME RAIL down the left edge: a
+   film-edge strip that plots how dense your archive is over time. You can see the summer you
+   took four hundred photos and the year you took nine. It is a navigation control and a
+   portrait of the library at the same time. Everything else is kept deliberately quiet so the
+   rail is the thing you notice.
+
+   COLOUR
+   ------
+   Photo apps go dark for a functional reason, not a fashionable one: any tint in the chrome
+   contaminates how you read the photograph. So the ground is a near-black with a faint cool
+   cast — the inside of a camera body, not neutral grey. Text is a warm off-white, the base
+   tone of photographic paper, because pure #FFF next to a photograph is glare.
+
+   Two accents, and the split between them carries meaning rather than decoration:
+
+       CYAN   is you.        Selection, focus, anything you are doing or can do.
+       AMBER  is the machine. Processing, queued work, another device analysing your library.
+
+   Amber is the darkroom safelight: on when work is happening, off when it is not. Because the
+   two never mean the same thing, you can read the state of the app from colour alone, and the
+   interface never has to explain which is which.
+
+   TYPE
+   ----
+   Two faces with one clean division of labour — words versus measurements. Half of a photo
+   app's interface is numbers (dates, f-stops, focal lengths, frame counts, coordinates), so
+   giving measurements their own voice is structural, not stylistic.
+
+       ARCHIVO       words. An industrial grotesque with signage bones, closer to the
+                     engraving on a camera body than to a UI default.
+       IBM PLEX MONO measurements. Technical, tabular, and unmistakably not prose.
+
+   Both are bundled locally. Nothing here loads from a network.
+   ============================================================================================ */
+
+/* -------------------------------------------------------------------------------------------
+   Fonts. Self-hosted: the app must render identically with no connection, and the WebView's
+   content policy would block a CDN anyway.
+   ------------------------------------------------------------------------------------------- */
+@font-face {
+    font-family: 'Archivo';
+    src: url('fonts/archivo-var.woff2') format('woff2-variations');
+    font-weight: 400 700;
+    font-style: normal;
+    font-display: block;
+}
+
+@font-face {
+    font-family: 'IBM Plex Mono';
+    src: url('fonts/plexmono-400.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: block;
+}
+
+@font-face {
+    font-family: 'IBM Plex Mono';
+    src: url('fonts/plexmono-500.woff2') format('woff2');
+    font-weight: 500;
+    font-style: normal;
+    font-display: block;
+}
+
+/* -------------------------------------------------------------------------------------------
+   Tokens
+   ------------------------------------------------------------------------------------------- */
+:root {
+    /* --- surfaces, darkest to lightest ------------------------------------------------- */
+    --ink: #0a0d0f;         /* app ground */
+    --surface: #12171a;     /* panels, top bar, status bar */
+    --raise: #1a2126;       /* rail, inputs, cards */
+    --raise-hi: #222b31;    /* hover on a raised surface */
+    --edge: #29323a;        /* hairline */
+    --edge-hi: #3c4952;     /* hairline, emphasised */
+
+    /* --- text, brightest to dimmest ----------------------------------------------------- */
+    --paper: #ede8de;       /* primary — photographic paper white, never #fff */
+    --paper-2: #a6adb4;     /* secondary */
+    --dim: #6c767e;         /* labels, units, disabled */
+    --dimmer: #4a545c;      /* rail gridlines, empty states */
+
+    /* --- the two accents ---------------------------------------------------------------- */
+    --select: #5fb8b8;      /* CYAN: the user. selection, focus, interactive */
+    --select-soft: rgba(95, 184, 184, 0.14);
+    --select-line: rgba(95, 184, 184, 0.42);
+
+    --safelight: #e8761f;   /* AMBER: the machine. processing, queued, working */
+    --safelight-soft: rgba(232, 118, 31, 0.13);
+    --safelight-line: rgba(232, 118, 31, 0.40);
+
+    --alert: #d9544f;       /* failures only. never decorative */
+
+    /* --- type --------------------------------------------------------------------------- */
+    --font-display: 'Archivo', 'Bahnschrift', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+
+    /* A deliberately short scale. Six sizes is enough for an application; more invites
+       inconsistency without adding expressive range. */
+    --t-micro: 0.625rem;    /* 10px — uppercase labels, rail marks, units */
+    --t-data: 0.6875rem;    /* 11px — mono values */
+    --t-body: 0.8125rem;    /* 13px — interface text */
+    --t-lead: 0.9375rem;    /* 15px — captions, the search field */
+    --t-title: 1.25rem;     /* 20px — panel and page titles */
+    --t-hero: 2.125rem;     /* 34px — empty states, the one big moment */
+
+    /* Uppercase micro-labels need generous tracking or they read as a smudge. */
+    --track-label: 0.11em;
+    --track-tight: -0.01em;
+
+    /* --- geometry ----------------------------------------------------------------------- */
+    /* 4px base. Every gap, pad, and offset in the app is a multiple of it. */
+    --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
+    --s5: 24px; --s6: 32px; --s7: 48px; --s8: 64px;
+
+    --rail-w: 108px;        /* the signature element; wide enough to carry per-month counts */
+    --filters-w: 236px;     /* the facet panel, when open */
+    --topbar-h: 52px;
+    --statusbar-h: 30px;
+
+    /* Corners stay tight. A photograph has square corners; rounding the frames around it
+       makes the sheet look like a web page rather than a light table. */
+    --r-sm: 2px;
+    --r-md: 4px;
+    --r-pill: 999px;
+
+    /* --- motion -------------------------------------------------------------------------- */
+    /* One duration and one curve for almost everything. Variety in motion timing reads as
+       carelessness far faster than variety in colour does. */
+    --dur: 140ms;
+    --dur-slow: 260ms;
+    --ease: cubic-bezier(0.2, 0.6, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --dur: 0ms;
+        --dur-slow: 0ms;
+    }
+
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* -------------------------------------------------------------------------------------------
+   Reset
+   ------------------------------------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;                 /* the shell manages its own scroll regions */
+}
+
+body {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: var(--font-display);
+    font-size: var(--t-body);
+    font-weight: 400;
+    letter-spacing: var(--track-tight);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+
+    /* This is a desktop application, not a document. */
+    user-select: none;
+    cursor: default;
+    overscroll-behavior: none;
+}
+
+#app { height: 100%; }
+
+button, input, select, textarea {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+}
+
+button {
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+/* Keyboard focus must always be visible, and it is cyan because focus is the user. Pointer
+   interaction does not get a ring — :focus-visible handles that distinction for us. */
+:focus { outline: none; }
+
+:focus-visible {
+    outline: 2px solid var(--select);
+    outline-offset: 2px;
+    border-radius: var(--r-sm);
+}
+
+::selection {
+    background: var(--select-soft);
+    color: var(--paper);
+}
+
+/* Scrollbars, restyled to disappear into the surface. A default Windows scrollbar in a dark
+   application is the single loudest piece of borrowed chrome. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: var(--edge);
+    border-radius: var(--r-pill);
+    border: 3px solid var(--ink);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--edge-hi); }
+
+/* -------------------------------------------------------------------------------------------
+   Type utilities
+   ------------------------------------------------------------------------------------------- */
+.label {
+    font-size: var(--t-micro);
+    font-weight: 600;
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--dim);
+}
+
+.mono {
+    font-family: var(--font-mono);
+    font-size: var(--t-data);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+}
+
+/* Numbers that sit next to each other must not dance as they change. */
+.num { font-variant-numeric: tabular-nums; }
+
+/* -------------------------------------------------------------------------------------------
+   Shell
+   ------------------------------------------------------------------------------------------- */
+.shell {
+    display: grid;
+    grid-template-rows: var(--topbar-h) 1fr var(--statusbar-h);
+    height: 100%;
+    background: var(--ink);
+
+    /* A grid row is as wide as its widest item unless told otherwise, and the top bar is a row
+       of nowrap controls whose intrinsic width is well over a thousand pixels. Without these
+       the top bar decided how wide the whole application was: at a 780-pixel window the sheet
+       ran off the right-hand edge, taking the language picker, the import button and half the
+       status bar with it. */
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* --- top bar ------------------------------------------------------------------------------ */
+.topbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
+    padding: 0 var(--s4);
+    background: var(--surface);
+    border-bottom: 1px solid var(--edge);
+
+    /* Clipped rather than allowed to push. What drops off the end is handled deliberately by
+       the breakpoints below, in order of how little each control is missed. */
+    min-width: 0;
+    overflow: hidden;
+}
+
+.wordmark {
+    display: flex;
+    align-items: baseline;
+    gap: 1px;
+    font-size: var(--t-lead);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    flex: none;
+}
+
+/* The wordmark splits its two halves across the two accents: the part you drive and the part
+   that runs itself. It is the only place both accents appear together, which is what teaches
+   the colour code in the first second of using the app. */
+.wordmark b { color: var(--paper); font-weight: 700; }
+.wordmark i { color: var(--select); font-style: normal; font-weight: 700; }
+
+/* --- search ------------------------------------------------------------------------------- */
+.search {
+    position: relative;
+    flex: 1 1 auto;
+    max-width: 720px;
+}
+
+.search input {
+    width: 100%;
+    height: 34px;
+    padding: 0 var(--s3) 0 var(--s7);
+    background: var(--raise);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-md);
+    color: var(--paper);
+    font-size: var(--t-lead);
+    transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.search input::placeholder {
+    color: var(--dim);
+    font-style: italic;   /* the placeholder is an example, not a label — it should read differently */
+}
+
+.search input:focus {
+    background: var(--raise-hi);
+    border-color: var(--select-line);
+    outline: none;
+}
+
+.search .glyph {
+    position: absolute;
+    left: var(--s3);
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--dim);
+    pointer-events: none;
+    font-size: var(--t-body);
+}
+
+.search input:focus ~ .glyph { color: var(--select); }
+
+.search .count {
+    position: absolute;
+    right: var(--s3);
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--dim);
+    pointer-events: none;
+}
+
+/* --- toolbar buttons ---------------------------------------------------------------------- */
+.tools { display: flex; align-items: center; gap: var(--s1); flex: none; }
+
+.tool {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    height: 30px;
+    min-width: 30px;
+    padding: 0 var(--s2);
+    border-radius: var(--r-md);
+    color: var(--paper-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.tool:hover { background: var(--raise); color: var(--paper); }
+
+/* A panel being open is a state, not an alarm. It gets a raised background and nothing else —
+ * cyan is reserved for the two things it should have meant all along: what is selected right
+ * now, and a filter that is actually narrowing the library. */
+.tool[aria-pressed="true"] {
+    background: var(--raise);
+    color: var(--paper);
+}
+
+/* Filters, when filters are on. This one keeps the accent, because it is the only control on
+ * screen whose state changes what the sheet contains. */
+.tool.armed,
+.tool.armed[aria-pressed="true"] {
+    background: var(--select-soft);
+    color: var(--select);
+    box-shadow: inset 0 0 0 1px var(--select-line);
+}
+
+/* The uppercase label beside each top-bar selector, at every width. "Newest first" does not
+ * need a heading reading SORT, and "English" does not need one reading LANGUAGE; the two of
+ * them were four shouted words framing two controls that already say what they are. */
+.topbar .sortpick .label { display: none; }
+
+.tool-sep {
+    width: 1px;
+    height: 18px;
+    background: var(--edge);
+    margin: 0 var(--s2);
+}
+
+/* -------------------------------------------------------------------------------------------
+   Body: the rail and the sheet
+   ------------------------------------------------------------------------------------------- */
+.body {
+    display: grid;
+    grid-template-columns: var(--rail-w) 1fr;
+    min-height: 0;                    /* lets the sheet scroll instead of the page */
+
+    /* And the same for the other axis: a grid child defaults to a minimum of its content, so
+       the contact sheet would refuse to narrow past its widest row. */
+    min-width: 0;
+    overflow: hidden;
+}
+
+.body.with-filters {
+    grid-template-columns: var(--rail-w) var(--filters-w) 1fr;
+}
+
+/* A page with no rail and no facet panel — the faces wall. Without this the sheet is placed in
+   the first grid column, which is the rail's 108px, and the whole page renders one card wide
+   with the heading broken to one letter per line. */
+.body.plain {
+    grid-template-columns: 1fr;
+}
+
+/* ===========================================================================================
+   THE TIME RAIL — the signature element
+   ===========================================================================================
+   Not a scrollbar. A density plot of the archive over time, drawn as a film edge: each month
+   is a bar whose length is how many photos you took. Years are marked in mono along the
+   outside. The visible slice of the sheet is bracketed, so the rail shows where you are and
+   what is around you at the same time.
+
+   Earning its width is the point. It costs 76px of grid area permanently, and the trade is
+   that a 50,000-photo library becomes navigable by eye — you aim at the dense patch rather
+   than scrolling for it. Cramming twelve more thumbnails on screen would not help anyone find
+   a photograph.
+   =========================================================================================== */
+.rail {
+    position: relative;
+    background: var(--surface);
+    border-right: 1px solid var(--edge);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Sprocket perforations down the outer edge. The one piece of pure ornament in the whole
+   design, and it is doing a job: it reads as film stock instantly and tells you the rail is a
+   strip to be travelled rather than a list to be clicked. */
+.rail::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 7px;
+    background-image: repeating-linear-gradient(
+        to bottom,
+        transparent 0 7px,
+        var(--edge) 7px 13px
+    );
+    opacity: 0.55;
+    pointer-events: none;
+}
+
+.rail-scroll {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: var(--s2) var(--s2) var(--s2) 12px;
+    scrollbar-width: none;
+}
+
+.rail-scroll::-webkit-scrollbar { width: 0; }
+
+/* The year heading is also a control: clicking it selects the whole year. */
+.rail-year {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s1);
+    width: 100%;
+    margin: var(--s3) 0 var(--s1);
+    padding: 2px var(--s1);
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: var(--t-micro);
+    font-weight: 500;
+    color: var(--paper-2);
+    letter-spacing: 0.06em;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.rail-year:hover { background: var(--raise); color: var(--paper); }
+.rail-year .y { flex: none; }
+.rail-year .n { margin-left: auto; color: var(--dim); }
+.rail-year.on { background: var(--select-soft); color: var(--select); }
+.rail-year.on .n { color: var(--select); }
+
+/* One month. The bar is the data; the whole row is the hit target. */
+.rail-month {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    width: 100%;
+    height: 15px;
+    padding: 0 var(--s1);
+    border-radius: var(--r-sm);
+    color: var(--dimmer);
+    transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.rail-month:hover { color: var(--paper-2); background: var(--raise); }
+
+.rail-month .m {
+    width: 8px;
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    text-align: center;
+    opacity: 0.7;
+}
+
+.rail-month .c {
+    width: 18px;
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    text-align: right;
+    color: var(--dimmer);
+}
+
+.rail-bar {
+    flex: 1 1 auto;
+    height: 5px;
+    background: var(--edge);
+    border-radius: 1px;
+    overflow: hidden;
+}
+
+.rail-bar span {
+    display: block;
+    height: 100%;
+    background: var(--dim);
+    border-radius: 1px;
+    transition: background var(--dur) var(--ease), width var(--dur-slow) var(--ease);
+}
+
+.rail-month:hover .rail-bar span { background: var(--paper-2); }
+
+/* Months containing photos still waiting to be analysed carry the safelight, so you can see
+   at a glance which part of the archive the machine has not reached yet. */
+.rail-month.working .rail-bar span { background: var(--safelight); }
+
+/* The selected period. Cyan, with a bracket in the margin like a film frame mark. */
+.rail-month.on { color: var(--select); background: var(--select-soft); }
+.rail-month.on .rail-bar span { background: var(--select); }
+.rail-month.on .c { color: var(--select); }
+
+.rail-month.on::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 1px;
+    bottom: 1px;
+    width: 2px;
+    background: var(--select);
+    border-radius: 1px;
+}
+
+/* Inside a shift-selected range, but not one of its endpoints. */
+.rail-month.span { color: var(--paper-2); background: rgba(95, 184, 184, 0.06); }
+.rail-month.span .rail-bar span { background: var(--select-line); }
+
+/* A compressed run of empty months.
+   Deliberately not a button — there is nothing in it to show. It exists so the vertical axis
+   stays truthful about elapsed time, and is drawn as a break in the film rather than content. */
+.rail-gap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 14px;
+    margin: 1px 0;
+}
+
+.rail-gap span {
+    display: block;
+    width: 100%;
+    height: 1px;
+    background-image: linear-gradient(to right, transparent 0 2px, var(--edge) 2px 5px);
+    background-size: 5px 1px;
+}
+
+/* When a period is selected the rail picks up a cyan edge, so it is obvious at a glance that
+   the sheet is narrowed and where the narrowing came from. */
+.rail.filtered { border-right-color: var(--select-line); }
+
+.rail-clear {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    margin: var(--s2) var(--s2) 0 12px;
+    padding: var(--s1) var(--s2);
+    background: var(--select-soft);
+    border: 1px solid var(--select-line);
+    border-radius: var(--r-md);
+    color: var(--select);
+    font-size: var(--t-micro);
+    text-align: left;
+    line-height: 1.25;
+}
+
+.rail-clear:hover { background: rgba(95, 184, 184, 0.22); }
+.rail-clear .x { flex: none; font-size: 9px; }
+.rail-clear .lbl { flex: 1 1 auto; }
+
+.rail-empty {
+    padding: var(--s4) var(--s2);
+    color: var(--dimmer);
+    font-size: var(--t-micro);
+    text-align: center;
+    line-height: 1.5;
+}
+
+/* ===========================================================================================
+   FILTER PANEL
+   ===========================================================================================
+   Search assumes you already know what to type. Browsing a photo library usually starts the
+   other way round — you know roughly when, or which camera, or roughly where — and you want the
+   set narrowed until the answer is visible. Every facet here is a dimension people actually
+   think in, and each maps onto exactly one field of the query the sheet runs, so clicking a
+   facet and typing the equivalent filter produce the same result.
+
+   Counts are always shown. A facet value without a count makes you click it to find out whether
+   clicking was worth it.
+   =========================================================================================== */
+.filters {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--edge);
+}
+
+.filters-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--s3) var(--s3) var(--s2);
+    border-bottom: 1px solid var(--edge);
+}
+
+.filters-scroll {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: var(--s2) var(--s2) var(--s6);
+}
+
+/* Secondary actions: "New album", "Clear all", "Read photos".
+ *
+ * These were cyan, uppercase and letter-spaced — the same treatment as a structural label and
+ * the same colour as the current selection. Three different jobs wearing one costume is why
+ * everything looked equally important. Uppercase is now reserved for labels that name a region
+ * of the interface; an action is written the way it would be spoken, and it earns colour only
+ * on hover, when the pointer has already singled it out. */
+.linkish {
+    color: var(--dim);
+    font-size: var(--t-micro);
+    letter-spacing: 0.01em;
+}
+
+.linkish:hover { text-decoration: underline; }
+
+/* --- one collapsible group ---------------------------------------------------------------- */
+.fsection { margin-bottom: var(--s1); }
+
+.fsection-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    width: 100%;
+    padding: var(--s2) var(--s1);
+    border-radius: var(--r-sm);
+    color: var(--paper-2);
+    font-size: var(--t-micro);
+    font-weight: 600;
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    transition: color var(--dur) var(--ease);
+}
+
+.fsection-head:hover { color: var(--paper); }
+.fsection-head .caret { color: var(--dim); font-size: 8px; }
+.fsection-head .t { flex: 1 1 auto; text-align: left; }
+.fsection-head .n { color: var(--dimmer); font-family: var(--font-mono); }
+
+.fsection-body { padding: 0 0 var(--s2); }
+
+/* --- one facet value ------------------------------------------------------------------------ */
+.facet {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    width: 100%;
+    padding: 3px var(--s2);
+    border-radius: var(--r-sm);
+    color: var(--paper-2);
+    font-size: var(--t-body);
+    text-align: left;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.facet:hover { background: var(--raise); color: var(--paper); }
+
+.facet .v {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.facet .n {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: var(--t-data);
+    color: var(--dim);
+}
+
+.facet.on { background: var(--select-soft); color: var(--select); }
+.facet.on .n { color: var(--select); }
+
+/* --- rating ---------------------------------------------------------------------------------- */
+.stars { display: flex; align-items: center; gap: 2px; padding: 0 var(--s2) var(--s2); }
+
+.star {
+    width: 20px;
+    height: 20px;
+    color: var(--dimmer);
+    font-size: 14px;
+    transition: color var(--dur) var(--ease);
+}
+
+.star:hover, .star.on { color: var(--select); }
+
+/* ===========================================================================================
+   ACTIVE FILTER CHIPS
+   ===========================================================================================
+   Three surfaces can each narrow the sheet — the rail, the panel, the search box. Without one
+   place listing everything currently active, "why am I only seeing four photos" becomes a hunt
+   across all three. Each chip removes exactly its own filter, so unwinding is one click at a
+   time rather than all-or-nothing.
+   =========================================================================================== */
+.chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+    margin: 0 0 var(--s4);
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: 3px var(--s2) 3px var(--s3);
+    background: var(--select-soft);
+    border: 1px solid var(--select-line);
+    border-radius: var(--r-pill);
+    color: var(--select);
+    font-size: var(--t-micro);
+    letter-spacing: 0.02em;
+    transition: background var(--dur) var(--ease);
+}
+
+.chip:hover { background: rgba(95, 184, 184, 0.24); }
+.chip .x { font-size: 9px; opacity: 0.75; }
+
+.chip.clear {
+    background: transparent;
+    border-color: var(--edge);
+    color: var(--dim);
+}
+
+.chip.clear:hover { border-color: var(--edge-hi); color: var(--paper-2); }
+
+/* --- sort control ------------------------------------------------------------------------------ */
+.sortpick { display: inline-flex; align-items: center; gap: var(--s2); }
+
+.sortpick select {
+    height: 28px;
+    padding: 0 var(--s2);
+    background: var(--raise);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-md);
+    color: var(--paper);
+    font-size: var(--t-body);
+}
+
+.sortpick select:hover { border-color: var(--edge-hi); }
+
+/* Count badge on the Filters button, so the button says how much is hidden behind it. */
+.tool .pip {
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    background: var(--select);
+    border-radius: var(--r-pill);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 15px;
+    text-align: center;
+}
+
+/* ===========================================================================================
+   THE SHEET — the contact sheet grid
+   =========================================================================================== */
+.sheet {
+    position: relative;
+    min-width: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: var(--s5) var(--s6) var(--s7);
+    min-height: 0;
+}
+
+/* The sheet header states what you are looking at, in the sheet's own margin. */
+.sheet-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s3);
+    margin-bottom: var(--s4);
+    padding-bottom: var(--s3);
+    border-bottom: 1px solid var(--edge);
+}
+
+.sheet-head h1 {
+    margin: 0;
+    font-size: var(--t-title);
+    font-weight: 600;
+    letter-spacing: var(--track-tight);
+}
+
+/* The router focuses the heading on every navigation so screen readers announce the new page.
+ * That is right, and it was also drawing a cyan focus ring around the words "All photos" on
+ * arrival — the loudest thing on screen, marking something the user had not chosen and could
+ * not act on. The focus stays; the ring goes. Nothing else in the application removes a focus
+ * ring, because everything else with one is a control somebody deliberately reached. */
+.sheet-head h1:focus,
+.sheet-head h1:focus-visible { outline: none; }
+
+.sheet-head .sub { color: var(--dim); }
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(var(--cell, 180px), 1fr));
+    gap: var(--s3);
+}
+
+/* A frame on the sheet. The cell is fixed and square-ish; the photograph sits inside it at its
+   own aspect with the sheet showing around it, exactly as a contact print does. Cropping every
+   thumbnail to fill its cell would be denser and would also quietly lie about the framing of
+   every portrait photograph in the library. */
+.frame {
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+    transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.frame:hover {
+    border-color: var(--edge-hi);
+    transform: translateY(-1px);
+}
+
+.frame img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;             /* honour the photograph's framing */
+    display: block;
+    background: var(--ink);
+}
+
+.frame.selected {
+    border-color: var(--select);
+    box-shadow: 0 0 0 1px var(--select);
+}
+
+/* Frame index, in the margin of the cell. Numbering is legitimate here: it is the photo's
+   position in capture order, which is information a contact sheet has always carried. */
+.frame .idx {
+    position: absolute;
+    left: var(--s1);
+    bottom: var(--s1);
+    padding: 1px 4px;
+    background: rgba(10, 13, 15, 0.82);
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--paper-2);
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease);
+}
+
+.frame:hover .idx { opacity: 1; }
+
+/* Processing state, top-right, safelight amber. Only drawn when the machine has work to do on
+   this frame — a library that is fully analysed shows none of these at all. */
+.frame .state {
+    position: absolute;
+    top: var(--s1);
+    right: var(--s1);
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--safelight);
+    box-shadow: 0 0 0 2px rgba(10, 13, 15, 0.7);
+}
+
+.frame .state.failed { background: var(--alert); }
+
+/* A frame with no decodable pixels. Rather than a broken-image glyph, it states the fact. */
+.frame.unreadable {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-style: dashed;
+    border-color: var(--edge-hi);
+}
+
+.frame.unreadable .why {
+    padding: var(--s2);
+    text-align: center;
+    font-size: var(--t-micro);
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--dim);
+    line-height: 1.6;
+}
+
+/* --- empty state -------------------------------------------------------------------------- */
+/* An empty screen is an invitation to act, so it says what to do, not that nothing is here. */
+.empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s3);
+    height: 60vh;
+    text-align: center;
+}
+
+.empty h2 {
+    margin: 0;
+    font-size: var(--t-hero);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}
+
+.empty p {
+    margin: 0;
+    max-width: 42ch;
+    color: var(--paper-2);
+    line-height: 1.6;
+}
+
+/* -------------------------------------------------------------------------------------------
+   Buttons
+   ------------------------------------------------------------------------------------------- */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    height: 32px;
+    padding: 0 var(--s4);
+    background: var(--raise);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-md);
+    color: var(--paper);
+    transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+
+.btn:hover { background: var(--raise-hi); border-color: var(--edge-hi); }
+
+.btn-primary {
+    background: var(--select-soft);
+    border-color: var(--select-line);
+    color: var(--select);
+}
+
+.btn-primary:hover { background: rgba(95, 184, 184, 0.22); }
+
+/* ===========================================================================================
+   STATUS BAR — where the safelight lives
+   ===========================================================================================
+   The distinctive thing about PixelFlux is that your machines quietly analyse the library while
+   you are not using them, trading work through a shared folder. This strip is the only place
+   that fact is expressed, and it is deliberately the quietest surface in the app: factual,
+   monospaced, and dark until there is genuinely something happening.
+   =========================================================================================== */
+.statusbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
+    padding: 0 var(--s4);
+    background: var(--surface);
+    border-top: 1px solid var(--edge);
+    font-family: var(--font-mono);
+    font-size: var(--t-data);
+    color: var(--dim);
+}
+
+.statusbar .spacer { flex: 1 1 auto; }
+
+/* The status bar is a flex row of nowrap counters; the same clipping rule applies. */
+.statusbar { min-width: 0; overflow: hidden; }
+
+/* Work that can be started from the status bar. It sits beside counters, so it is written like
+ * one — no uppercase, no accent — and only appears when there is something to do. */
+.statusbar .stat.linkish {
+    text-transform: none;
+    letter-spacing: 0.01em;
+    color: var(--dim);
+}
+
+.statusbar .stat.linkish:hover { color: var(--select); }
+
+.stat { display: inline-flex; align-items: center; gap: var(--s2); }
+
+.stat b {
+    color: var(--paper-2);
+    font-weight: 500;
+}
+
+/* The safelight itself. Amber and slowly breathing while work is in flight; a dead grey dot
+   when everything is analysed. Two states, no text needed to tell them apart. */
+.safelight {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    color: var(--dim);
+}
+
+.safelight .lamp {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--dimmer);
+    flex: none;
+}
+
+.safelight.on { color: var(--safelight); }
+
+.safelight.on .lamp {
+    background: var(--safelight);
+    box-shadow: 0 0 6px var(--safelight-line);
+    animation: breathe 2.4s var(--ease) infinite;
+}
+
+@keyframes breathe {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.42; }
+}
+
+/* ===========================================================================================
+   VIEWER — one photograph, and the plate that describes it
+   =========================================================================================== */
+.viewer {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    grid-template-rows: 1fr auto;
+    background: var(--ink);
+}
+
+.viewer-stage {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-height: 0;
+    overflow: hidden;
+    padding: var(--s5);
+
+    /* Declared a size container so .framed can be sized against BOTH of the stage's axes.
+       Without this the picture can only be fitted to the width, which is how a square
+       photograph ended up taller than the window. */
+    container-type: size;
+}
+
+.viewer-stage img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    /* A photograph on a light table casts a shadow; on a black ground it needs an edge or it
+       bleeds into the surface. One hairline, not a drop shadow. */
+    outline: 1px solid var(--edge);
+}
+
+.viewer-close {
+    position: absolute;
+    top: var(--s4);
+    right: var(--s4);
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-md);
+    color: var(--paper-2);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.viewer-close:hover { background: var(--raise-hi); color: var(--paper); }
+
+.viewer-step {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 40px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(to right, rgba(10, 13, 15, 0.85), transparent);
+    color: var(--paper-2);
+    font-size: var(--t-title);
+    transition: color var(--dur) var(--ease);
+}
+
+.viewer-step:hover { color: var(--select); }
+.viewer-step.prev { left: 0; }
+.viewer-step.next { right: 0; transform: translateY(-50%) scaleX(-1); }
+
+/* --- the EXIF plate ----------------------------------------------------------------------- */
+/* Set like the spec plate engraved on a lens barrel: mono, small, hairline-separated, in a
+   fixed order that never reflows. A row of rounded metadata chips would say the same thing and
+   would look like every other application. */
+.plate {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--edge);
+    padding: var(--s3) var(--s4);
+
+    /* Scrolls sideways on a narrow window rather than losing the last columns, but never
+       vertically — the height below is the whole point. The scrollbar is suppressed because at
+       this height it would be most of the plate. */
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+
+    /* Fixed. The plate is the bottom edge of the window and the photograph is sized against
+       whatever is left above it, so anything that changes this height moves the picture. Adding
+       one keyword used to wrap the tag strip onto a second line, which grew the plate and made
+       the photograph jump — a layout shift as the direct result of typing a word. */
+    height: 52px;
+}
+
+.plate-group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 0 var(--s4);
+    border-left: 1px solid var(--edge);
+    white-space: nowrap;
+}
+
+.plate-group:first-child { border-left: 0; padding-left: 0; }
+
+.plate-group .k {
+    font-size: var(--t-micro);
+    font-weight: 600;
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--dim);
+}
+
+.plate-group .v {
+    font-family: var(--font-mono);
+    font-size: var(--t-data);
+    color: var(--paper);
+    font-variant-numeric: tabular-nums;
+}
+
+.plate-group .v.absent { color: var(--dimmer); }
+
+/* A value the app inferred rather than read. Marked, because a guessed date must never look
+   like one the camera recorded. */
+.plate-group .v.inferred {
+    color: var(--paper-2);
+    border-bottom: 1px dashed var(--edge-hi);
+}
+
+/* The tag strip takes whatever width is left and scrolls inside it, rather than wrapping. */
+.plate::-webkit-scrollbar { display: none; }
+
+/* Label on top; strip and the pinned add control side by side beneath it. */
+.plate-group.saw-group {
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: center;
+    column-gap: var(--s2);
+}
+
+.plate-group.saw-group > .k { grid-column: 1 / -1; }
+
+    /* A flex item will not shrink below its content without this, so the strip would push the
+       plate wider instead of scrolling and the fixed height above would clip it. */
+    min-width: 0;
+}
+
+/* What the model saw. Tags are the machine's output, so they carry the safelight, not cyan.
+
+   One row, always. There can be a dozen detected objects, the file's own keywords, and whatever
+   the user has typed; wrapping is how the plate grew. A horizontal strip keeps the number of
+   tags a property of the strip rather than of the window. */
+.saw {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: var(--s1);
+    align-items: center;
+    overflow-x: auto;
+    overflow-y: hidden;
+
+    /* The scrollbar is suppressed, not the scrolling. A 15px chrome scrollbar inside a 20px
+       strip would be most of it, and Chromium already maps a vertical wheel onto an element
+       that only scrolls horizontally — so the gesture people will actually try works. */
+    scrollbar-width: none;
+}
+
+.saw::-webkit-scrollbar { display: none; }
+
+/* Chips keep their size instead of being squeezed by the flex container. */
+.saw > * { flex: 0 0 auto; }
+
+/* With the scrollbar gone, the trailing fade is the only thing saying there is more. It stops
+   at the edge the reading direction ends on, so it never covers the first chip. */
+.saw {
+    mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+}
+
+.rtl .saw {
+    mask-image: linear-gradient(to left, #000 calc(100% - 20px), transparent);
+}
+
+.tag {
+    padding: 2px var(--s2);
+    background: var(--safelight-soft);
+    border: 1px solid var(--safelight-line);
+    border-radius: var(--r-pill);
+    font-size: var(--t-micro);
+    letter-spacing: 0.02em;
+    color: var(--safelight);
+}
+
+/* A tag the user typed is theirs, so it flips to cyan. Same shape, different agency. */
+.tag.mine {
+    background: var(--select-soft);
+    border-color: var(--select-line);
+    color: var(--select);
+}
+
+.saw .none {
+    font-size: var(--t-micro);
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--dimmer);
+}
+
+/* -------------------------------------------------------------------------------------------
+   Crash surface. MAUI Blazor Hybrid swallows component lifecycle exceptions — this is the only
+   place they can be seen, so it is styled to be readable rather than hidden.
+   ------------------------------------------------------------------------------------------- */
+.crash {
+    margin: var(--s6) auto;
+    max-width: 900px;
+    padding: var(--s5);
+    background: var(--surface);
+    border: 1px solid var(--alert);
+    border-radius: var(--r-md);
+}
+
+.crash h2 {
+    margin: 0 0 var(--s3);
+    font-size: var(--t-title);
+    color: var(--alert);
+}
+
+.crash pre {
+    margin: var(--s3) 0 0;
+    padding: var(--s3);
+    max-height: 340px;
+    overflow: auto;
+    background: var(--ink);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: var(--t-data);
+    color: var(--paper-2);
+    white-space: pre-wrap;
+    user-select: text;
+}
+
+#blazor-error-ui {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    padding: var(--s3) var(--s4);
+    background: var(--alert);
+    color: #fff;
+    font-size: var(--t-body);
+}
+
+#blazor-error-ui .dismiss { cursor: pointer; float: right; }
+
+/* -------------------------------------------------------------------------------------------
+   Narrow windows. This is a desktop app and will not see a phone, but a user can absolutely
+   drag it to a third of a 1080p screen, and the sheet has to survive that.
+   ------------------------------------------------------------------------------------------- */
+/* The order things are given up in, as the window narrows. Each step drops whatever is least
+   missed at that width, so the controls that survive to the end are the ones the application is
+   for: the search box, the view switch, and the photographs. */
+
+@media (max-width: 1400px) {
+    .sheet { padding: var(--s4) var(--s5) var(--s6); }
+}
+
+@media (max-width: 1200px) {
+    /* Language is set once and never again. It moves out of the way before anything used
+       daily. Marked with a class rather than matched on its label, which is translated. */
+    .topbar .sortpick.lang { display: none; }
+
+    .topbar { gap: var(--s3); }
+    .sheet { padding: var(--s4) var(--s4) var(--s6); }
+}
+
+@media (max-width: 1000px) {
+    :root { --filters-w: 200px; --cell: 150px; }
+
+    /* Hairline separators are decoration once the bar is tight. */
+    .topbar .tool-sep { display: none; }
+    .search { max-width: none; }
+}
+
+@media (max-width: 860px) {
+    :root { --rail-w: 56px; --cell: 140px; }
+
+    .rail-month .m { display: none; }
+    .sheet { padding: var(--s3) var(--s3) var(--s6); }
+    .topbar { gap: var(--s2); padding: 0 var(--s2); }
+    .wordmark i { display: none; }   /* keep the mark, drop its second half */
+
+    /* A four-digit year and a count do not both fit in 56 pixels, and half a number is worse
+       than none — "2026 8(" reads as a bug. The year stays because it is the axis; the count is
+       still in the row's tooltip and, more usefully, in the bar beside it. */
+    .rail-year .n { display: none; }
+    .rail-year { letter-spacing: 0.02em; }
+
+    /* The zoom and shortcut buttons have keyboard equivalents; the import button does not, so
+       it stays. */
+    .topbar .tools .tool { display: none; }
+
+    /* The status bar keeps the counters and the actions, and loses the privacy note, which is
+       reassurance rather than information. */
+    .statusbar .stat.quiet { display: none; }
+}
+
+@media (max-width: 700px) {
+    /* Below this the facet panel and the sheet are fighting over the same 400 pixels, and the
+       sheet is what the user came for. The panel is still one click away. */
+    .body.with-filters { grid-template-columns: var(--rail-w) 1fr; }
+    .sidepanel { display: none; }
+
+    .topbar .sortpick { display: none; }
+}
+
+@media (max-width: 560px) {
+    .rail { display: none; }
+    .body,
+    .body.with-filters,
+    .body.plain { grid-template-columns: 1fr; }
+
+    :root { --cell: 120px; }
+}
+
+/* ===========================================================================================
+   RIGHT-TO-LEFT
+   ===========================================================================================
+   Arabic is in the shipped language set specifically because RTL breaks assumptions that never
+   surface in a Latin-only build. Almost nothing here needs a rule: the layout is written with
+   logical properties and flex/grid, both of which mirror automatically from `dir="rtl"` on the
+   shell. What is listed below is the residue — the handful of places where a physical direction
+   was genuinely meant, or where a glyph has a handedness of its own.
+
+   The grid itself is deliberately absent from this list. `grid-auto-flow` already reverses, so
+   the contact sheet fills from the right with no help, and the keyboard handler swaps the
+   arrow keys to match.
+   =========================================================================================== */
+.rtl .rail { border-right: 0; border-left: 1px solid var(--edge); }
+.rtl .rail.filtered { border-left-color: var(--select-line); }
+
+/* The sprocket strip belongs on the outer edge of the film, which has moved. */
+.rtl .rail::before { inset: 0 0 0 auto; }
+.rtl .rail-scroll { padding: var(--s2) 12px var(--s4) var(--s2); }
+.rtl .rail-clear { margin: var(--s2) 12px 0 var(--s2); }
+.rtl .rail-month.on::before { left: auto; right: -8px; }
+
+.rtl .filters { border-right: 0; border-left: 1px solid var(--edge); }
+.rtl .search input { padding: 0 var(--s7) 0 var(--s3); }
+.rtl .search .glyph { left: auto; right: var(--s3); }
+.rtl .search .count { right: auto; left: var(--s3); }
+
+/* Chevrons point at a direction, so they have to turn round. The close ✕ does not. */
+.rtl .viewer-step.prev { left: auto; right: 0; transform: translateY(-50%) scaleX(-1); }
+.rtl .viewer-step.next { right: auto; left: 0; transform: translateY(-50%); }
+.rtl .viewer-close { right: auto; left: var(--s4); }
+.rtl .frame .idx { left: auto; right: var(--s1); }
+.rtl .frame .state, .rtl .frame .rating { right: auto; left: var(--s1); }
+.rtl .plate-group { border-left: 0; border-right: 1px solid var(--edge); }
+.rtl .plate-group:first-child { border-right: 0; padding-right: 0; }
+
+/* ===========================================================================================
+   MODAL SURFACES
+   =========================================================================================== */
+.modal-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--s5);
+    background: rgba(6, 8, 10, 0.72);
+}
+
+.modal {
+    width: min(680px, 100%);
+    max-height: 82vh;
+    overflow: auto;
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-md);
+}
+
+.modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--s4) var(--s5);
+    border-bottom: 1px solid var(--edge);
+}
+
+.modal-head h2 {
+    margin: 0;
+    font-size: var(--t-title);
+    font-weight: 600;
+    letter-spacing: var(--track-tight);
+}
+
+/* --- keyboard shortcut list ------------------------------------------------------------------ */
+.keys-body {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--s5);
+    padding: var(--s5);
+}
+
+.keys-body section h3 { margin: 0 0 var(--s3); }
+
+.keys-body dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--s2) var(--s3);
+    margin: 0;
+    align-items: baseline;
+}
+
+.keys-body dt { display: flex; gap: 3px; }
+.keys-body dd { margin: 0; color: var(--paper-2); }
+
+kbd {
+    display: inline-block;
+    min-width: 20px;
+    padding: 2px 5px;
+    background: var(--raise);
+    border: 1px solid var(--edge-hi);
+    border-bottom-width: 2px;
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: var(--t-micro);
+    color: var(--paper);
+    text-align: center;
+}
+
+/* ===========================================================================================
+   KEYBOARD FOCUS IN THE GRID
+   ===========================================================================================
+   The grid uses a roving tabindex, so exactly one cell is a tab stop and the arrows move which
+   one. That makes the focus ring the only thing telling a keyboard user where they are — it has
+   to be unmissable, and it must not be confused with the selection ring.
+   =========================================================================================== */
+.frame.focused {
+    border-color: var(--select);
+    box-shadow: 0 0 0 2px var(--select-soft), 0 0 0 1px var(--select);
+}
+
+/* Star rating, shown on the frame so "highest rated" is verifiable by looking. */
+.frame .rating {
+    position: absolute;
+    top: var(--s1);
+    left: var(--s1);
+    padding: 1px 4px;
+    background: rgba(10, 13, 15, 0.82);
+    border-radius: var(--r-sm);
+    font-size: 8px;
+    letter-spacing: 0.5px;
+    color: var(--select);
+}
+
+/* Bidirectional isolation.
+   Facet values, filenames, camera models, and coordinates are LTR data that can appear inside
+   RTL chrome. <bdi> already isolates them; these rules just keep the display type and overflow
+   behaviour identical to the <span> they replaced. */
+bdi { unicode-bidi: isolate; }
+.facet bdi.v, .plate-group bdi.v { display: block; }
+.facet bdi.v { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ===========================================================================================
+   ALBUMS
+   ===========================================================================================
+   An album is a view, not a folder. Adding a photograph to one does not move the file, and a
+   photograph can belong to any number of them, so the vocabulary follows: add and remove, never
+   copy and delete. "Move" appears only between two albums, the one case where something
+   genuinely leaves somewhere.
+
+   Every row is a drop target, because dragging a selection onto an album is the gesture people
+   reach for first.
+   =========================================================================================== */
+.sidepanel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--edge);
+}
+
+.rtl .sidepanel { border-right: 0; border-left: 1px solid var(--edge); }
+
+/* The album list takes a bounded share of the panel and scrolls on its own, so a long list of
+   albums cannot push the facets off the bottom of the screen. */
+.albums {
+    flex: 0 0 auto;
+    max-height: 38%;
+    overflow-y: auto;
+    padding: var(--s2);
+    border-bottom: 1px solid var(--edge);
+}
+
+.sidepanel .filters { flex: 1 1 auto; border: 0; }
+
+.albums-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--s1) var(--s1) var(--s2);
+}
+
+.albums-none {
+    margin: 0;
+    padding: var(--s2);
+    color: var(--dimmer);
+    font-size: var(--t-micro);
+}
+
+.album-row { position: relative; display: flex; align-items: center; }
+
+.album {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 4px var(--s2);
+    border-radius: var(--r-sm);
+    color: var(--paper-2);
+    font-size: var(--t-body);
+    text-align: left;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.album:hover { background: var(--raise); color: var(--paper); }
+.album .v { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.album .n { flex: none; font-family: var(--font-mono); font-size: var(--t-data); color: var(--dim); }
+.album.on { background: var(--select-soft); color: var(--select); }
+.album.on .n { color: var(--select); }
+
+/* Delete stays hidden until hover. A destructive action should not sit permanently under the
+   cursor of someone who is only browsing. */
+.album-x {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    border-radius: var(--r-sm);
+    color: var(--dimmer);
+    font-size: 9px;
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.album-row:hover .album-x { opacity: 1; }
+.album-x:hover { color: var(--alert); background: var(--raise); }
+.album-x:focus-visible { opacity: 1; }
+
+/* Drop target. Cyan, because dropping is something the user is doing. */
+.album-row.dropping { outline: 1px dashed var(--select); outline-offset: -1px; border-radius: var(--r-sm); }
+.album-row.dropping .album { background: var(--select-soft); color: var(--select); }
+
+.album-drop {
+    position: absolute;
+    right: var(--s2);
+    font-size: 9px;
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--select);
+    pointer-events: none;
+}
+
+.rtl .album-drop { right: auto; left: var(--s2); }
+
+.album-new { padding: var(--s2); }
+
+.album-new input {
+    width: 100%;
+    height: 28px;
+    padding: 0 var(--s2);
+    background: var(--raise);
+    border: 1px solid var(--select-line);
+    border-radius: var(--r-md);
+    color: var(--paper);
+    font-size: var(--t-body);
+}
+
+.album-new-actions { display: flex; align-items: center; gap: var(--s2); margin-top: var(--s2); }
+
+.album-error {
+    margin: var(--s2) 0 0;
+    color: var(--alert);
+    font-size: var(--t-micro);
+}
+
+/* ===========================================================================================
+   SELECTION
+   =========================================================================================== */
+.selbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    margin: 0 0 var(--s4);
+    padding: var(--s2) var(--s3);
+    background: var(--select-soft);
+    border: 1px solid var(--select-line);
+    border-radius: var(--r-md);
+}
+
+.selbar .spacer { flex: 1 1 auto; }
+
+.selbar-count {
+    font-family: var(--font-mono);
+    font-size: var(--t-data);
+    color: var(--select);
+}
+
+.selbar-pick { display: inline-flex; align-items: center; gap: var(--s2); }
+
+.selbar-pick select {
+    height: 26px;
+    max-width: 180px;
+    padding: 0 var(--s2);
+    background: var(--raise);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-md);
+    color: var(--paper);
+    font-size: var(--t-body);
+}
+
+/* The tick in a frame's corner, hidden until hover or selection — an unselected sheet should
+   stay a sheet of photographs rather than a sheet of checkboxes. */
+.frame .pick {
+    position: absolute;
+    top: var(--s1);
+    left: var(--s1);
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(10, 13, 15, 0.7);
+    border: 1px solid var(--edge-hi);
+    border-radius: var(--r-sm);
+    color: transparent;
+    font-size: 11px;
+    opacity: 0;
+    cursor: pointer;
+    transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.rtl .frame .pick { left: auto; right: var(--s1); }
+
+.frame:hover .pick, .frame:focus-visible .pick { opacity: 1; }
+
+.frame.picked .pick {
+    opacity: 1;
+    background: var(--select);
+    border-color: var(--select);
+    color: var(--ink);
+}
+
+/* A selected frame dims slightly and takes a cyan edge, so a selection reads at a glance across
+   a full screen of thumbnails. */
+.frame.picked {
+    border-color: var(--select);
+    box-shadow: inset 0 0 0 2px var(--select-soft);
+}
+
+.frame.picked img { opacity: 0.78; }
+
+/* The rating badge steps aside when the tick occupies its corner. */
+.frame.picked .rating, .frame:hover .rating { left: 26px; }
+.rtl .frame.picked .rating, .rtl .frame:hover .rating { left: auto; right: 26px; }
+
+.statusbar .flash { color: var(--select); }
+
+/* ===========================================================================================
+   SEGMENTATION OVERLAY
+   ===========================================================================================
+   Tinted masks over the photograph, one per thing the model located, each with a label chip.
+
+   Each mask is a greyscale PNG on disk applied as a CSS mask-image to a flat coloured div, so
+   the browser tints exactly the mask pixels. No canvas, no per-frame JavaScript, and the
+   browser's own image cache does the work — twenty segments cost twenty ordinary image loads.
+
+   COLOUR IS THE EXCEPTION TO THE TWO-ACCENT RULE, ON PURPOSE. Here it is not decoration: it is
+   the only thing separating two masks that touch, and the only thing tying a chip to the region
+   it names. The hue is hashed from the label, so every dog in the library is the same colour in
+   every photograph.
+   =========================================================================================== */
+
+/* Shrink-wraps the rendered image so the overlay can be positioned in percentages of the
+   photograph rather than of the stage. Without this, a portrait photo letterboxed inside a wide
+   stage would have every mask offset by the empty margins. */
+/* Sized by the photograph's own aspect ratio, set inline from its stored dimensions.
+   The image used to size itself with `max-height: 100%`, which resolves against .framed — and
+   .framed had an automatic height, so the percentage never resolved, the picture rendered at
+   natural size and ran off the bottom of the stage behind the metadata plate. Worse, .framed's
+   box then did not match the rendered picture, so every mask was positioned against the wrong
+   rectangle. Fixing the sizing fixed the overlay at the same time. */
+/* The photograph's box: exactly the rendered picture, so the segmentation overlay drawn on top
+   of it lines up, and zooming transforms picture and overlay together.
+
+   Sizing it is the whole difficulty. `aspect-ratio` alone derives height from width, so a
+   portrait or square frame overflowed the stage and was clipped by the window — the picture ran
+   under the metadata plate and the top of it was cut off. Nor does adding `max-height: 100%`
+   fix it: once the width is settled the browser clamps the height and stops preserving the
+   ratio, which distorts the box and puts every mask in the wrong place.
+
+   Container query units state the intent directly: be as wide as the stage, or as wide as the
+   stage's HEIGHT allows at this ratio, whichever is smaller. That is the definition of fitting
+   a picture into a frame, and it holds for any orientation with no special cases. */
+.framed {
+    position: relative;
+    display: block;
+    width: min(100cqw, calc(100cqh * var(--ar, 1.5)));
+    aspect-ratio: var(--ar, 1.5);
+    line-height: 0;
+}
+
+.framed img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    outline: 1px solid var(--edge);
+}
+
+.segs { position: absolute; inset: 0; }
+
+/* A segment: a crisp bounding box, with a subtle coloured mask inside it.
+   The mask is an <img>, not a CSS mask-image. As a CSS mask it is a cross-origin subresource and
+   has to satisfy both the page content policy and the WebView's host-resource rules; as an image
+   it goes down exactly the path the thumbnails already use. The colour is baked into the file.
+
+   THE OPACITY IS ON THE IMAGE, NOT ON THE BOX. Putting it on the container dimmed the border
+   along with the fill — a 55%-alpha outline inside a 22%-opacity div renders at 12% and is
+   simply not there. Separating them is what lets the box stay legible while the fill stays out
+   of the way, which is the whole point of having both. */
+.seg {
+    position: absolute;
+    border: 1.5px solid hsl(var(--hue) 90% 62%);
+    border-radius: var(--r-sm);
+    box-shadow: 0 0 0 1px rgba(10, 13, 15, 0.45);
+    transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.seg img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    /* The mask covers exactly this box, so it stretches one to one. */
+    object-fit: fill;
+    opacity: 0.3;
+    -webkit-user-drag: none;
+    transition: opacity var(--dur) var(--ease);
+}
+
+/* Hovering a mask, or its label, lifts just that one. Everything else is left alone: dimming
+   the others made the overlay flicker as the pointer crossed it. */
+.seg:hover, .seg.lit {
+    border-color: hsl(var(--hue) 95% 72%);
+    box-shadow: 0 0 0 1px rgba(10, 13, 15, 0.7), 0 0 12px hsl(var(--hue) 90% 55% / 0.5);
+}
+
+.seg:hover img, .seg.lit img { opacity: 0.55; }
+
+.seg-chip {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: 2px var(--s2);
+    background: rgba(10, 13, 15, 0.86);
+    border: 1px solid hsl(var(--hue) 70% 52%);
+    border-radius: var(--r-pill);
+    color: var(--paper);
+    font-size: var(--t-micro);
+    letter-spacing: 0.02em;
+    line-height: 1.5;
+    white-space: nowrap;
+    transform: translate(-2px, -2px);
+    transition: background var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.seg-chip:hover, .seg-chip.lit {
+    background: hsl(var(--hue) 70% 22%);
+    transform: translate(-2px, -3px);
+}
+
+.seg-chip .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: hsl(var(--hue) 85% 58%);
+    flex: none;
+}
+
+/* Chips carry the label and nothing else. Each one used to append "6% of the frame", which
+   tripled their width, pushed them into each other, and told the reader nothing they wanted at
+   a glance. The figure moved to the tooltip, where it is available and not in the way. */
+.seg-chip .lbl { font-weight: 500; }
+
+/* Toggle in the viewer's corner, next to the close button. Off by default: the reason to open a
+   photograph is to look at the photograph. */
+.viewer-masks {
+    position: absolute;
+    top: var(--s4);
+    right: calc(var(--s4) + 40px);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    height: 32px;
+    padding: 0 var(--s3);
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-md);
+    color: var(--paper-2);
+    font-family: var(--font-mono);
+    font-size: var(--t-data);
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.rtl .viewer-masks { right: auto; left: calc(var(--s4) + 40px); }
+.viewer-masks:hover { background: var(--raise-hi); color: var(--paper); }
+.viewer-masks.on { background: var(--select-soft); border-color: var(--select-line); color: var(--select); }
+
+/* A located object in the plate. Clickable, and coloured to match its mask — which is what ties
+   the chip to the region without needing a legend. */
+.tag.seen {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    background: hsl(var(--hue) 45% 16%);
+    border-color: hsl(var(--hue) 55% 38%);
+    color: hsl(var(--hue) 65% 78%);
+    cursor: pointer;
+}
+
+.tag.seen:hover { background: hsl(var(--hue) 50% 24%); }
+
+.tag.seen .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: hsl(var(--hue) 85% 58%);
+}
+
+/* ===========================================================================================
+   IMAGE ZOOM AND PAN
+   ===========================================================================================
+   The transform is applied to the wrapper, not the image, so the segmentation overlay zooms and
+   pans locked to the photograph. Transforming them separately would drift the masks off their
+   subjects the moment anyone zoomed in — which is exactly when a mask matters most.
+   =========================================================================================== */
+
+/* touch-action: none hands every gesture to the handler rather than letting the WebView act on
+   it first. Without it a pinch scrolls and zooms the page underneath at the same time. */
+.viewer-stage { touch-action: none; overflow: hidden; }
+
+.framed {
+    /* No transition on transform. Zoom follows the pointer continuously and an eased transform
+       lags a pinch by exactly the transition duration, which reads as the app being slow. */
+    will-change: transform;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+.framed img { -webkit-user-drag: none; pointer-events: none; }
+
+/* The zoom readout, doubling as a reset button. Only present when zoomed — at 100% it would be
+   a permanent label saying nothing. */
+.viewer-zoom {
+    position: absolute;
+    top: var(--s4);
+    right: calc(var(--s4) + 152px);
+    height: 32px;
+    padding: 0 var(--s3);
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-md);
+    color: var(--select);
+    font-family: var(--font-mono);
+    font-size: var(--t-data);
+    font-variant-numeric: tabular-nums;
+    transition: background var(--dur) var(--ease);
+}
+
+.rtl .viewer-zoom { right: auto; left: calc(var(--s4) + 152px); }
+.viewer-zoom:hover { background: var(--raise-hi); }
+
+/* -------------------------------------------------------------------------------------------
+   The faces page
+   -------------------------------------------------------------------------------------------
+
+   A deliberate inversion of the contact sheet. On the sheet, every frame is letterboxed inside
+   its cell so the photograph's own framing is never misrepresented — that is the whole point of
+   a contact print. Here the crops FILL their cells edge to edge, because a face crop is not a
+   photograph, it is an index entry the machine cut out. Making the two look different is how a
+   person knows which one they are reading.
+
+   The wall's own device is KINSHIP: pointing at any face lights every other face from the same
+   photograph. That is a fact the library actually holds, unlike identity, which it does not.
+   ------------------------------------------------------------------------------------------- */
+
+/* Denser than the sheet. Faces are legible small — a head at 96px is recognisable where a
+   landscape at 96px is a smudge — and the point of this page is seeing everyone at once. */
+.facewall {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+    gap: var(--s2);
+    outline: none;
+}
+
+.facecard {
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    padding: 0;
+    min-height: 0;
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.facecard img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    /* cover, not contain: the crop is already square and centred on the face, so filling the
+       cell wastes nothing and keeps every head the same size on screen. */
+    object-fit: cover;
+    background: var(--ink);
+    transition: transform var(--dur) var(--ease);
+}
+
+/* The fallback is the whole photograph, standing in for a crop that could not be written. It
+   is desaturated so it never passes for a real face crop at a glance. */
+.facecard img.fallback {
+    object-fit: cover;
+    filter: grayscale(0.7) brightness(0.75);
+}
+
+.facecard:hover {
+    border-color: var(--edge-hi);
+    transform: translateY(-1px);
+}
+
+.facecard:hover img { transform: scale(1.04); }
+
+/* The roving-tabindex position, drawn only while the wall actually holds keyboard focus. The
+   position exists from the moment the page loads — it has to, or the first Tab would land
+   nowhere — but painting a ring on it at rest tells the user something is selected when nothing
+   is, and on a wall of faces that reads as "this person is picked out". */
+.facewall:focus-within .facecard.focused,
+.facecard:focus-visible {
+    border-color: var(--select);
+    box-shadow: 0 0 0 1px var(--select);
+    outline: none;
+}
+
+/* Kinship. Every face from the photograph under the pointer, including that one. Cyan because
+   this is the user's own act of pointing, not the machine doing work. */
+.facecard.kin {
+    border-color: var(--select-line);
+    box-shadow: inset 0 0 0 1px var(--select-soft);
+}
+
+/* Certainty, as a hairline along the bottom edge rather than a number on every card. A wall of
+   percentages is unreadable; a wall where two bars are visibly short is not. */
+.facecard .sure {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 2px;
+    background: rgba(10, 13, 15, 0.55);
+}
+
+.facecard .sure i {
+    display: block;
+    height: 100%;
+    background: var(--select);
+    opacity: 0.55;
+}
+
+/* "2/4" — which face this is of the ones in its photograph. Numbering that carries real
+   information, which is the only kind this design system allows. */
+.facecard .of {
+    position: absolute;
+    top: var(--s1);
+    inset-inline-end: var(--s1);
+    padding: 1px 4px;
+    background: rgba(10, 13, 15, 0.8);
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 1.4;
+    color: var(--paper-2);
+}
+
+.facecard.kin .of {
+    background: rgba(95, 184, 184, 0.22);
+    color: var(--paper);
+}
+
+/* The separator was --dim, which at 9px on a dark plate rendered "2/4" as "2 4". Numbers that
+   read as two numbers instead of a fraction defeat the whole point of the badge. */
+.facecard .of i {
+    font-style: normal;
+    color: var(--paper-2);
+    opacity: 0.7;
+    padding: 0 1px;
+}
+
+/* Where the face came from. Hidden until the card is pointed at or focused: on a full wall,
+   a caption under every crop is more text than photograph. */
+.facecard .whence {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: var(--s3) var(--s1) var(--s1);
+    background: linear-gradient(to top, rgba(10, 13, 15, 0.92), rgba(10, 13, 15, 0));
+    text-align: start;
+    opacity: 0;
+    transform: translateY(4px);
+    transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.facecard:hover .whence,
+.facecard:focus-visible .whence,
+.facewall:focus-within .facecard.focused .whence {
+    opacity: 1;
+    transform: none;
+}
+
+.facecard .when {
+    font-size: 9px;
+    color: var(--paper-2);
+}
+
+.facecard .where {
+    font-size: var(--t-micro);
+    color: var(--dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* -------------------------------------------------------------------------------------------
+   The view switch, shared by both pages
+   ------------------------------------------------------------------------------------------- */
+.viewswitch {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--raise);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-md);
+}
+
+.viewswitch .vs {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: 3px var(--s3);
+    background: transparent;
+    border: 0;
+    border-radius: var(--r-sm);
+    font-family: var(--font-display);
+    font-size: var(--t-body);
+    color: var(--paper-2);
+    cursor: pointer;
+    transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.viewswitch .vs:hover { background: var(--raise-hi); color: var(--paper); }
+
+.viewswitch .vs.on {
+    background: var(--select-soft);
+    color: var(--paper);
+    box-shadow: inset 0 0 0 1px var(--select-line);
+}
+
+.viewswitch .pip {
+    padding: 0 4px;
+    border-radius: var(--r-pill);
+    background: rgba(10, 13, 15, 0.5);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--dim);
+}
+
+.viewswitch .vs.on .pip { color: var(--paper-2); }
+
+/* The topbar is a flex row; the faces page needs to push its tools to the far end without
+   borrowing the status bar's rule. */
+.topbar > .spacer { flex: 1 1 auto; }
+
+/* A statement of fact, not a warning. Dim, and never coloured — an alert tone here would imply
+   something had gone wrong when the opposite is being said. */
+.statusbar .stat.quiet {
+    color: var(--dimmer);
+    font-size: var(--t-micro);
+}
+
+/* -------------------------------------------------------------------------------------------
+   This person
+   -------------------------------------------------------------------------------------------
+
+   The drill-down from a face to everywhere that face appears. It is one level deeper than the
+   wall, and the design says so plainly: a bar across the top holding the face you picked, and
+   below it photographs rather than crops, because the question being answered is "where else
+   is this person" and the answer is a set of pictures.
+   ------------------------------------------------------------------------------------------- */
+.personbar {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
+    margin-bottom: var(--s4);
+    padding: var(--s3);
+    background: var(--surface);
+    border: 1px solid var(--edge);
+    border-radius: var(--r-md);
+}
+
+/* The face that was clicked, held on screen for the whole search. Without it the results are a
+   grid of strangers with no statement of what they are supposed to have in common. */
+.personbar .personface {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--select-line);
+    background: var(--ink);
+}
+
+.personbar .personwho { display: flex; flex-direction: column; gap: 2px; }
+
+.personbar h2 {
+    margin: 0;
+    font-size: var(--t-lead);
+    font-weight: 600;
+    letter-spacing: var(--track-tight);
+}
+
+.personbar .sub { color: var(--dim); font-size: var(--t-data); }
+
+.personbar .spacer { flex: 1 1 auto; }
+
+/* What the match actually is. Dim and small — it is a qualifier, not a warning — but present
+   on the surface making the claim rather than filed away in a settings screen. */
+.personbar .caution {
+    max-width: 34ch;
+    color: var(--dimmer);
+    font-size: var(--t-micro);
+    line-height: 1.45;
+    text-align: end;
+}
+
+/* The matched face, inset into the corner of its photograph. The thumbnail says which
+   picture this is; the inset says which face in it matched, which in a group shot is the only
+   thing that makes the result checkable. */
+.frame .inset {
+    position: absolute;
+    inset-inline-start: var(--s1);
+    top: var(--s1);
+    width: 34px;
+    height: 34px;
+    object-fit: cover;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--select-line);
+    box-shadow: 0 1px 4px rgba(10, 13, 15, 0.6);
+    background: var(--ink);
+}
+
+/* How alike, per result. Always visible, unlike the wall's captions: on this view the number is
+   the evidence for the claim the page is making, so hiding it until hover would be hiding the
+   one thing a sceptical user wants. */
+.frame .alike {
+    position: absolute;
+    inset-inline-end: var(--s1);
+    bottom: var(--s1);
+    padding: 1px 5px;
+    background: rgba(10, 13, 15, 0.82);
+    border-radius: var(--r-sm);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--paper-2);
+}
+
+.frame .alike.here {
+    background: var(--select-soft);
+    box-shadow: inset 0 0 0 1px var(--select-line);
+    color: var(--paper);
+    font-family: var(--font-display);
+}
+
+/* A face with no vector: detected, shown, but not searchable. A single dim dot rather than a
+   badge with words on it — this is a footnote about one card, and the explanation lives in its
+   tooltip. */
+.facecard .uncomparable {
+    position: absolute;
+    inset-inline-start: var(--s1);
+    top: var(--s1);
+    width: 10px;
+    height: 10px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: rgba(10, 13, 15, 0.7);
+    color: var(--dimmer);
+    font-size: 11px;
+    line-height: 1;
+}
+
+/* The appearance count on a grouped card. Same plate as the "2/4" position badge it replaces,
+   but reading as a multiplier rather than a fraction — this card stands for a person seen this
+   many times, not for face two of four in one photograph. */
+.facecard .of.count {
+    background: rgba(95, 184, 184, 0.2);
+    box-shadow: inset 0 0 0 1px var(--select-line);
+    color: var(--paper);
+    font-family: var(--font-display);
+    font-size: var(--t-micro);
+    padding: 0 5px;
+}
+
+/* "No other photo has a face close enough to this one." A note above the single result, not an
+   empty state that replaces it — the one photograph is still the answer to the question. */
+.lonely {
+    margin: 0 0 var(--s4);
+    color: var(--dim);
+    font-size: var(--t-body);
+}
+
+/* -------------------------------------------------------------------------------------------
+   Labelling by hand
+   -------------------------------------------------------------------------------------------
+   The model's word is a starting point, not a verdict: it calls a red sports car a truck and a
+   cat's cardboard box a bed. Correcting it has to be right there on the chip that is wrong, or
+   nobody will do it.
+   ------------------------------------------------------------------------------------------- */
+
+/* The chip becomes a container for two hit targets: the name, which searches, and a pencil,
+   which corrects. Splitting them keeps the common action a single plain click. */
+.tag.seen {
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+    padding: 0;
+}
+
+.tag .tagmain {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: 2px var(--s2);
+    background: none;
+    border: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+}
+
+.tag .tagedit,
+.tag .tagx {
+    padding: 2px 5px 2px 3px;
+    background: none;
+    border: 0;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--dim);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+/* Hidden until the chip is pointed at — but always reachable from the keyboard, which is the
+   part an opacity-based reveal usually breaks. */
+.tag:hover .tagedit,
+.tag:hover .tagx,
+.tag .tagedit:focus-visible,
+.tag .tagx:focus-visible { opacity: 1; }
+
+.tag .tagedit:hover, .tag .tagx:hover { color: var(--paper); }
+
+/* A corrected region, and a keyword the user typed, share one treatment: this came from you,
+   not from the machine. Cyan is already the colour of the user throughout the app. */
+.tag.mine {
+    border-color: var(--select-line);
+    color: var(--paper);
+}
+
+.tag.editing {
+    padding: 0;
+    border-color: var(--select);
+}
+
+.tag.editing input {
+    width: 11ch;
+    padding: 2px var(--s2);
+    background: var(--ink);
+    border: 0;
+    border-radius: inherit;
+    font-family: var(--font-display);
+    font-size: var(--t-micro);
+    color: var(--paper);
+    outline: none;
+}
+
+.tag.add {
+    border-style: dashed;
+    color: var(--dim);
+    cursor: pointer;
+}
+
+/* Pinned beside the strip. Square, because at this size a word would cost more width than the
+   tags it is there to add. */
+.tag.addpin {
+    justify-self: end;
+    min-width: 22px;
+    text-align: center;
+}
+
+.tag.editing.addpin input { width: 13ch; }
+
+.tag.add:hover { color: var(--paper); border-color: var(--edge-hi); }
+
+/* What the search did to the query. Beside the count, in the sheet's own margin — a correction
+   the user did not ask for has to be visible, or results for a word they never typed look like
+   the application malfunctioning. */
+.sheet-head .searchnote {
+    font-size: var(--t-micro);
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--select);
+}
+
+/* The vision model's description. Two lines in the plate's fixed height, with the whole
+   paragraph on hover — it is a search asset first and a caption second, so it earns a glance
+   rather than a column of the window. */
+.plate-group.described { max-width: 38ch; min-width: 0; }
+
+.plate-group.described .v.prose {
+    font-family: var(--font-display);
+    font-size: var(--t-micro);
+    line-height: 1.35;
+    color: var(--paper-2);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+
+/* ---------------------------------------------------------------- the analysis panel
+ *
+ * Four stages, four bars. They finish at very different rates — describing is sixteen seconds a
+ * photograph, embedding is a fifth of a second — so a single averaged bar would sit apparently
+ * stalled for hours and then jump. Separate bars are slower to read and tell the truth.
+ */
+.modal.analysis { width: min(560px, 92vw); }
+
+.analysis-body {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    padding: 18px 20px 20px;
+}
+
+.analysis-body .stages { display: flex; flex-direction: column; gap: 10px; }
+
+.stage {
+    display: grid;
+    /* Fixed label column so the bars align down the left edge; a bar that starts in a different
+     * place on every row cannot be compared at a glance, which is the only thing it is for. */
+    grid-template-columns: 116px 1fr auto;
+    align-items: center;
+    gap: 12px;
+}
+
+.stage .t { font-size: var(--t-small); color: var(--text); }
+
+.stage .bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--raise);
+    overflow: hidden;
+}
+
+.stage .fill {
+    display: block;
+    height: 100%;
+    background: var(--select);
+    /* Slow, because this bar moves on its own. A fast transition on an unprompted change reads
+     * as something reacting to the user, and nothing here is. */
+    transition: width 600ms ease;
+}
+
+.stage .n {
+    font-family: var(--mono);
+    font-size: var(--t-micro);
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.stage .n .of { color: var(--dim); }
+
+.stuck {
+    margin: -4px 0 4px 128px;
+    font-size: var(--t-micro);
+    color: var(--dim);
+}
+
+.analysis-body .when { display: flex; flex-direction: column; gap: 12px; }
+
+.analysis-body .choices { display: flex; gap: 8px; }
+
+.analysis-body .choices .facet {
+    flex: 1;
+    justify-content: center;
+    padding: 8px 10px;
+}
+
+.analysis-body .window { display: flex; gap: 16px; }
+
+.analysis-body .window label,
+.analysis-body .gap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.analysis-body .gap { justify-content: space-between; }
+.analysis-body .gap input[type="range"] { flex: 1; accent-color: var(--select); }
+
+.analysis-body input[type="time"] {
+    background: var(--raise);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: var(--t-small);
+    padding: 6px 8px;
+}
+
+.analysis-body .actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+}
+
+/* The status-bar lamp is a button now. It must not look like one until it is reached: it reports
+ * background work, and a permanently-outlined control in the corner of the screen is exactly the
+ * kind of thing this interface has too much of already. */
+button.safelight {
+    background: none;
+    border: none;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    padding: 0 2px;
+}
+
+button.safelight:hover { color: var(--text); }
+
+
+/* Hardware, in the analysis panel. The device list is a readout, not a control: it says what the
+ * runtime found, which is the only way to tell an accelerator that is working from one that
+ * silently is not there. */
+.analysis-body .hardware { display: flex; flex-direction: column; gap: 12px; }
+
+.analysis-body .devices {
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    font-family: var(--mono);
+    font-size: var(--t-micro);
+    color: var(--dim);
+}
+
+.analysis-body .devices .sep { padding: 0 4px; opacity: 0.5; }
+
+.analysis-body .note {
+    margin: 0;
+    font-size: var(--t-micro);
+    color: var(--dim);
+}
+
+
+/* A dialog is focused so Escape closes it and a screen reader lands inside — not because the user
+ * chose it. The ring made the whole modal the loudest thing on screen, which is the same mistake
+ * the page heading had. The focus stays; the ring goes. Controls inside keep theirs, because
+ * those are things somebody deliberately reached. */
+.modal:focus,
+.modal:focus-visible { outline: none; }
+
+.stuck { margin-top: 2px; }
+
+
+/* A finished stage stops using the accent.
+ *
+ * Four stages that are all done meant four full cyan bars, which is the loudest thing in the panel
+ * saying the least — everything is fine. Draining the colour out of the finished ones leaves the
+ * accent meaning what it means everywhere else in this application: this is the part that is
+ * live. On a part-analysed library the one bar still moving is now the one you see. */
+/* --dim, not another raised grey: the track is already --raise, and a fill one step off it
+ * would be a bar you cannot see rather than a bar that is quiet. */
+.stage.done .fill { background: var(--dim); }
+.stage.done .t { color: var(--dim); }
+
+/* A field label, not a section heading. "Pause between photos" was wearing the same uppercase
+ * tracking as WHEN TO RUN and HARDWARE, which made a single slider look like a third section. */
+.analysis-body .field {
+    font-size: var(--t-small);
+    color: var(--text);
+    white-space: nowrap;
+}
+
+
+/* The retry sits inside the sentence it answers, so it needs the space a sentence would give it.
+ * Without this the rendered line read "1 could not be read. Try again" as one run of text and the
+ * action was invisible as an action. */
+.stuck .linkish { margin-inline-start: 10px; }
+
+
+/* ---------------------------------------------------------------- the model setup dialog
+ *
+ * Wider than the other modals because each row carries a sentence about what the model buys, a
+ * size, and a licence — three facts somebody weighs against each other before spending a
+ * gigabyte, and stacking them would turn a comparison into four separate readings.
+ */
+.modal.setup { width: min(680px, 94vw); }
+
+.setup-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px 20px 20px;
+}
+
+.setup-body .preamble {
+    margin: 0;
+    font-size: var(--t-small);
+    color: var(--dim);
+    line-height: 1.55;
+}
+
+.offer {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--raise);
+}
+
+/* An installed model stops competing for attention. Same rule as a finished analysis stage: the
+ * accent belongs to what still needs a decision. */
+.offer.have { opacity: 0.62; }
+
+.offer-what { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.offer-what .t { font-size: var(--t-small); color: var(--text); }
+
+.offer-what .meta,
+.setup-body .actions .meta {
+    font-size: var(--t-micro);
+    color: var(--dim);
+}
+
+.offer-what .sep,
+.setup-body .sep { padding: 0 6px; opacity: 0.5; }
+
+.offer .done {
+    margin-inline-start: auto;
+    font-size: var(--t-micro);
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--dim);
+}
+
+.offer > .btn { margin-inline-start: auto; flex: none; }
+
+.offer-progress {
+    margin-inline-start: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 5px;
+    min-width: 220px;
+}
+
+.offer-progress .bar {
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--raise-hi);
+    overflow: hidden;
+}
+
+.offer-progress .fill {
+    display: block;
+    height: 100%;
+    background: var(--select);
+    transition: width 300ms linear;
+}
+
+/* The licence note sits with its model rather than in a block of terms at the end. Indented so it
+ * reads as a footnote to the row above and not as another offer. */
+.terms {
+    margin: -8px 0 0 14px;
+    font-size: var(--t-micro);
+    color: var(--dim);
+    line-height: 1.5;
+}
+
+.terms a { color: var(--select); }
+
+.failed {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--raise);
+    border: 1px solid var(--danger-line, var(--border));
+    font-size: var(--t-small);
+    color: var(--text);
+}
+
+.setup-body .actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+}
+
+/* The path is a reassurance, not a control: it says where two gigabytes are about to land. It
+ * truncates from the left because the end of a path is the informative half. */
+.setup-body .actions .meta {
+    max-width: 46%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: end;
+}
+
+/* ---------------------------------------------------------------- source folders
+ *
+ * Paths are the content here, so they get the monospace face and as much width as the dialog has.
+ * Everything else on the row is subordinate to reading the path.
+ */
+.modal.sources { width: min(680px, 94vw); }
+
+.sources-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px 20px 20px;
+}
+
+.sources-body .empty {
+    margin: 0;
+    padding: 22px 0;
+    text-align: center;
+    font-size: var(--t-small);
+    color: var(--dim);
+}
+
+.folders { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+
+.folder {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--raise);
+}
+
+/* The path, and it may be long. Truncated from the left because the tail of a path is the part
+ * that identifies it — "…\Pictures\2019\Corfu" tells you more than "D:\Users\somebody\Pic…". */
+.folder .p {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--mono);
+    font-size: var(--t-small);
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    /* direction:rtl puts the ellipsis at the start so a long path keeps its informative tail.
+     * text-align has to be stated explicitly as left, or a path short enough to fit is pushed to
+     * the right-hand edge and the row reads as though it were right-aligned by choice. */
+    direction: rtl;
+    text-align: left;
+}
+
+/* An unreachable folder is dimmed but never hidden: it is still part of the library's definition
+ * and its row is how somebody discovers the drive is unplugged. */
+.folder.gone .p { color: var(--dim); }
+
+.folder .missing {
+    font-size: var(--t-micro);
+    letter-spacing: var(--track-label);
+    text-transform: uppercase;
+    color: var(--dim);
+    flex: none;
+}
+
+.sources-body .scanning {
+    margin: 0;
+    font-size: var(--t-micro);
+    color: var(--dim);
+}
+
+.sources-body .actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+}

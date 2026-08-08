@@ -1,0 +1,32 @@
+<Project>
+
+  <!--
+    Repo-wide build settings for PixelFlux.
+
+    Two deliberate choices here:
+
+    1. Warnings are errors. The prototype is meant to graduate into a real application, so
+       the zero-warning bar is enforced by the build rather than by discipline.
+
+    2. XML documentation is generated for every project and CS1591 ("missing XML comment for
+       publicly visible type or member") is therefore a hard error. The project brief requires
+       every public API to be documented; this makes that requirement mechanical instead of
+       aspirational. Internal/private members are exempt by definition — document those with
+       ordinary `//` comments where the reasoning is non-obvious.
+  -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- Deterministic, reproducible output; helps the content-hash tests stay stable. -->
+    <Deterministic>true</Deterministic>
+
+    <!-- The prototype is single-product; a shared prefix keeps assembly identities tidy. -->
+    <Product>PixelFlux</Product>
+    <Company>PixelFlux</Company>
+  </PropertyGroup>
+
+</Project>

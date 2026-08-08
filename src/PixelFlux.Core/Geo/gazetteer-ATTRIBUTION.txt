@@ -1,0 +1,14 @@
+PixelFlux offline gazetteer
+===========================
+
+Place names and coordinates are derived from the GeoNames geographical database.
+
+  Source:  https://www.geonames.org/
+  Dataset: cities15000.txt and countryInfo.txt
+  Licence: Creative Commons Attribution 4.0 (CC BY 4.0)
+           https://creativecommons.org/licenses/by/4.0/
+
+Contains 34079 populated places across 244 countries.
+Rebuild with: python tools/build_gazetteer.py
+
+This attribution must ship with any distribution of PixelFlux.

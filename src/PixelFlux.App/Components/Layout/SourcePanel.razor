@@ -1,0 +1,155 @@
+@using System.Globalization
+@using PixelFlux.App.Services
+@using PixelFlux.Core.Ingest
+@inject Strings T
+@inject SourceService Sources
+@implements IDisposable
+
+@*
+    Where the library gets its photographs from.
+
+    One folder or twenty, added once and remembered. Scanning again is always safe — ingestion
+    recognises a photograph it has already seen by its content — so the same button covers "I have
+    added a folder" and "I have put new pictures in one", which are the same action to the user and
+    were two different explanations before.
+*@
+
+<div class="modal-scrim" @onclick="Close">
+    <div class="modal sources"
+         role="dialog"
+         aria-modal="true"
+         aria-label="@T["sources.title"]"
+         tabindex="0"
+         @ref="_root"
+         @onkeydown="OnKey"
+         @onclick:stopPropagation="true">
+
+        <div class="modal-head">
+            <h2>@T["sources.title"]</h2>
+            @if (!Sources.Scanning)
+            {
+                <button class="tool" aria-label="@T["keys.close"]" @onclick="Close">✕</button>
+            }
+        </div>
+
+        <div class="sources-body">
+
+            @if (_folders.Count == 0)
+            {
+                @* An invitation, not an apology. This is the state every new library starts in and
+                   the only thing to do from here is add a folder. *@
+                <p class="empty">@T["sources.empty"]</p>
+            }
+            else
+            {
+                <ul class="folders">
+                    @foreach (SourceFolder source in _folders)
+                    {
+                        <li class="folder @(source.Exists ? null : "gone")">
+                            <bdi class="p">@source.Path</bdi>
+
+                            @* Kept and marked rather than dropped. An unplugged drive is the usual
+                               reason a folder is missing, and forgetting somebody's archive because
+                               it was offline once would be far worse than a greyed-out row. *@
+                            @if (!source.Exists)
+                            {
+                                <span class="missing">@T["sources.missing"]</span>
+                            }
+
+                            <button type="button" class="linkish"
+                                    disabled="@Sources.Scanning"
+                                    title="@T["sources.removeHint"]"
+                                    @onclick="() => Remove(source.Path)">@T["sources.remove"]</button>
+                        </li>
+                    }
+                </ul>
+            }
+
+            @if (Sources.Scanning)
+            {
+                <p class="scanning mono">@(Sources.Progress ?? T["sources.scanning"])</p>
+            }
+            else if (_result is { } done)
+            {
+                <p class="scanning">@T.Format("status.imported",
+                    done.Imported, done.Duplicates,
+                    done.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.CurrentCulture))</p>
+            }
+
+            <div class="actions">
+                <button type="button" class="btn" disabled="@Sources.Scanning" @onclick="Add">
+                    @T["sources.add"]
+                </button>
+
+                <button type="button" class="btn btn-primary"
+                        disabled="@(Sources.Scanning || _folders.Count == 0)"
+                        @onclick="Scan">@T["sources.scan"]</button>
+
+                <span class="spacer"></span>
+
+                @if (!Sources.Scanning)
+                {
+                    <button type="button" class="linkish" @onclick="Close">@T["sources.close"]</button>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    /// <summary>Raised when the dialog should close.</summary>
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private ElementReference _root;
+    private IReadOnlyList<SourceFolder> _folders = [];
+    private IngestResult? _result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Sources.Changed += OnSourcesChanged;
+        await ReloadAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await _root.FocusAsync();
+        }
+    }
+
+    private void OnSourcesChanged() => _ = InvokeAsync(ReloadAsync);
+
+    private async Task ReloadAsync()
+    {
+        _folders = await Sources.ListAsync();
+        StateHasChanged();
+    }
+
+    private Task Close() => Sources.Scanning ? Task.CompletedTask : OnClose.InvokeAsync();
+
+    private Task OnKey(KeyboardEventArgs e) =>
+        e.Key == "Escape" ? Close() : Task.CompletedTask;
+
+    private async Task Add()
+    {
+        _result = null;
+        await Sources.AddAsync();
+        await ReloadAsync();
+    }
+
+    private async Task Remove(string folder)
+    {
+        _result = null;
+        await Sources.RemoveAsync(folder);
+        await ReloadAsync();
+    }
+
+    private async Task Scan()
+    {
+        _result = await Sources.ScanAsync();
+        await ReloadAsync();
+    }
+
+    public void Dispose() => Sources.Changed -= OnSourcesChanged;
+}

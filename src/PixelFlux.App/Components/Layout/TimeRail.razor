@@ -1,0 +1,167 @@
+@using PixelFlux.App.Services
+@using System.Globalization
+@inject Strings T
+
+@*
+    THE TIME RAIL — a filter, and PixelFlux's signature element.
+
+    WHAT CHANGED AND WHY
+    --------------------
+    The first version got two things wrong, both of which made it not behave like a timeline:
+
+      * Clicking a month opened a photograph. That is a completely different verb from the one
+        the control implies. Clicking a period on a timeline means "show me this period".
+      * Only months containing photos were drawn, so June 2007 sat directly above July 2011 and
+        vertical position carried no information at all — which is precisely what stops a strip
+        of bars from reading as a timeline.
+
+    Now: clicking selects a period and the sheet filters to it. Every month between the oldest
+    and newest photograph is walked, with empty runs collapsed into marked gaps, so position on
+    the rail corresponds to position in time.
+
+    Click a month to filter to it. Click a year to filter to the whole year. Shift-click to
+    extend to a range. Click the active selection again to clear it.
+*@
+
+<nav class="rail @(Selection is null ? null : "filtered")" aria-label="@T["rail.label"]">
+
+    @if (Selection is { } active)
+    {
+        <button type="button" class="rail-clear" title="@T["rail.showAll"]" @onclick="Clear">
+            <span class="x" aria-hidden="true">✕</span>
+            <span class="lbl">@Describe(active)</span>
+        </button>
+    }
+
+    <div class="rail-scroll">
+        @if (Rows.Count == 0)
+        {
+            <div class="rail-empty">@T["rail.noPhotos"]</div>
+        }
+        else
+        {
+            @foreach (RailRow row in Rows)
+            {
+                RailRow r = row;   // captured per iteration for the click handlers
+
+                if (r.Kind == RailRowKind.Year)
+                {
+                    <button type="button"
+                            class="rail-year @(IsSelected(r) ? "on" : null)"
+                            title="@r.Start.Year — @Plural(r.Count)"
+                            aria-pressed="@(IsSelected(r) ? "true" : "false")"
+                            @onclick="args => Pick(r, args.ShiftKey)">
+                        <span class="y">@r.Start.Year</span>
+                        <span class="n">@r.Count</span>
+                    </button>
+                }
+                else if (r.Kind == RailRowKind.Gap)
+                {
+                    @* Not interactive: there is nothing in it to show. It exists so the vertical
+                       axis stays honest about elapsed time. *@
+                    <div class="rail-gap" title="@T.Format("rail.emptyMonths", r.GapMonths)">
+                        <span></span>
+                    </div>
+                }
+                else
+                {
+                    <button type="button"
+                            class="rail-month @(IsSelected(r) ? "on" : null) @(InRange(r) ? "span" : null) @(r.HasPendingWork ? "working" : null)"
+                            title="@MonthTooltip(r)"
+                            aria-pressed="@(IsSelected(r) ? "true" : "false")"
+                            @onclick="args => Pick(r, args.ShiftKey)">
+                        <span class="m">@MonthInitial(r)</span>
+                        <span class="rail-bar">
+                            @* A 7% floor keeps a one-photo month clickable. A bar you cannot
+                               see is a month you cannot reach. *@
+                            <span style="width:@FormatPercent(Math.Max(r.Share, 0.07))"></span>
+                        </span>
+                        <span class="c">@r.Count</span>
+                    </button>
+                }
+            }
+        }
+    </div>
+</nav>
+
+@code {
+    /// <summary>An inclusive span of time the gallery is filtered to.</summary>
+    /// <param name="From">Start, UTC.</param>
+    /// <param name="To">End, UTC.</param>
+    /// <param name="Label">How to describe it, for example <c>March 2024</c> or <c>2019 – 2024</c>.</param>
+    public readonly record struct Period(DateTimeOffset From, DateTimeOffset To, string Label);
+
+    /// <summary>Rows to draw, newest first, as built by <see cref="LibraryService.GetRailAsync"/>.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<RailRow> Rows { get; set; } = [];
+
+    /// <summary>The period currently filtered to, or null when showing everything.</summary>
+    [Parameter]
+    public Period? Selection { get; set; }
+
+    /// <summary>Raised when the selected period changes. Null means "show everything".</summary>
+    [Parameter]
+    public EventCallback<Period?> SelectionChanged { get; set; }
+
+    private bool IsSelected(RailRow row)
+        => Selection is { } s && s.From == row.Start && s.To == row.End;
+
+    /// <summary>Whether a month falls inside a multi-period selection, for the range highlight.</summary>
+    private bool InRange(RailRow row)
+        => Selection is { } s && !IsSelected(row) && row.Start >= s.From && row.End <= s.To;
+
+    private async Task Pick(RailRow row, bool extend)
+    {
+        // Shift-click extends from whatever is already selected to the row just clicked, in
+        // whichever direction that is. Selecting a range by clicking two ends is the interaction
+        // people already know from file lists, so it needs no explaining.
+        if (extend && Selection is { } current)
+        {
+            DateTimeOffset from = row.Start < current.From ? row.Start : current.From;
+            DateTimeOffset to = row.End > current.To ? row.End : current.To;
+            await SelectionChanged.InvokeAsync(new Period(from, to, DescribeSpan(from, to)));
+            return;
+        }
+
+        // Clicking the active selection again clears it. Without this the only way back to the
+        // whole library would be a separate control, and a filter you cannot undo where you set
+        // it is a trap.
+        if (IsSelected(row))
+        {
+            await SelectionChanged.InvokeAsync(null);
+            return;
+        }
+
+        await SelectionChanged.InvokeAsync(new Period(row.Start, row.End, Describe(row)));
+    }
+
+    private Task Clear() => SelectionChanged.InvokeAsync(null);
+
+    private static string Describe(RailRow row) => row.Kind switch
+    {
+        RailRowKind.Year => row.Start.Year.ToString(CultureInfo.InvariantCulture),
+        _ => row.Start.ToString("MMMM yyyy", CultureInfo.CurrentCulture),
+    };
+
+    private static string Describe(Period period) => period.Label;
+
+    private static string DescribeSpan(DateTimeOffset from, DateTimeOffset to)
+    {
+        string a = from.ToString("MMM yyyy", CultureInfo.CurrentCulture);
+        string b = to.ToString("MMM yyyy", CultureInfo.CurrentCulture);
+        return a == b ? a : $"{a} – {b}";
+    }
+
+    private static string Plural(int count) => count == 1 ? "1 photo" : $"{count} photos";
+
+    /// <summary>First letter of the month name — all that fits in the rail's 8px column.</summary>
+    private static string MonthInitial(RailRow row)
+        => row.Start.ToString("MMM", CultureInfo.InvariantCulture)[..1];
+
+    private string MonthTooltip(RailRow row)
+        => $"{Describe(row)} — {Plural(row.Count)}"
+         + (row.HasPendingWork ? $", {T["rail.notAnalysed"]}" : string.Empty);
+
+    private static string FormatPercent(double share)
+        => (share * 100).ToString("0.#", CultureInfo.InvariantCulture) + "%";
+}

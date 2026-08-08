@@ -1,0 +1,9 @@
+@page "/not-found"
+@layout MainLayout
+@inject PixelFlux.Core.Localisation.Strings T
+
+<div class="empty">
+    <h2>@T["notFound.title"]</h2>
+    <p>@T["notFound.body"]</p>
+    <a class="btn btn-primary" href="/">@T["notFound.action"]</a>
+</div>

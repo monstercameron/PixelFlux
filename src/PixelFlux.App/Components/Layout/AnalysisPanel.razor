@@ -1,0 +1,306 @@
+@using PixelFlux.App.Services
+@using PixelFlux.Core.Pipeline
+@using PixelFlux.Ai.Compute
+@inject Strings T
+@inject PipelineService Pipeline
+@implements IDisposable
+
+@*
+    What the analysis queue has done, what is left, and when it is allowed to run.
+
+    A surface rather than a settings row, because the schedule is only half the question a person
+    actually has. "When does this run" is meaningless without "what is it doing and how much is
+    left", and splitting the two across a progress readout and a preferences page would mean
+    nobody ever sees both at once.
+
+    Stages are listed in the order they run, with their own bars, because they finish at wildly
+    different rates — describing takes sixteen seconds a photograph and embedding takes a fifth of
+    a second — and one combined bar would look stalled for hours and then leap. Four honest bars
+    say more than one averaged one.
+*@
+
+<div class="modal-scrim" @onclick="() => OnClose.InvokeAsync()">
+    <div class="modal analysis"
+         role="dialog"
+         aria-modal="true"
+         aria-label="@T["analysis.title"]"
+         tabindex="0"
+         @ref="_root"
+         @onkeydown="OnKey"
+         @onclick:stopPropagation="true">
+
+        <div class="modal-head">
+            <h2>@T["analysis.title"]</h2>
+            <button class="tool" aria-label="@T["keys.close"]" @onclick="() => OnClose.InvokeAsync()">✕</button>
+        </div>
+
+        <div class="analysis-body">
+
+            <section class="stages">
+                @foreach (StageStatus stage in _stages)
+                {
+                    <div class="stage @(stage.HasWork ? null : "done")">
+                        <span class="t">@T[$"analysis.stage.{stage.Stage.Slug()}"]</span>
+                        <span class="bar" aria-hidden="true">
+                            <span class="fill" style="width: @($"{stage.Fraction * 100:F0}%")"></span>
+                        </span>
+                        <span class="n">@stage.Done<span class="of">/@stage.Total</span></span>
+                    </div>
+
+                }
+
+                @* Once, not once per stage. A photograph that cannot be decoded fails every stage
+                   that opens it, so the same fact was being stated four times about one file —
+                   which reads as four problems. The count is the worst stage's, because that is
+                   the number of files involved. *@
+                @if (_stuck > 0)
+                {
+                    <p class="stuck">
+                        @T.Format("analysis.stuck", _stuck)
+                        @* Offered because the reason a file failed is usually outside the library
+                           — an unmounted drive, a half-copied file — and once it is fixed the
+                           queue has no way to find out. *@
+                        <button type="button" class="linkish" @onclick="RetryStuck">@T["analysis.retry"]</button>
+                    </p>
+                }
+            </section>
+
+            <section class="when">
+                <h3 class="label">@T["analysis.when"]</h3>
+
+                <div class="choices" role="radiogroup" aria-label="@T["analysis.when"]">
+                    @foreach (ScheduleMode mode in _modes)
+                    {
+                        <button type="button"
+                                class="facet @(_mode == mode ? "on" : null)"
+                                role="radio"
+                                aria-checked="@(_mode == mode ? "true" : "false")"
+                                @onclick="() => SetMode(mode)">
+                            <span class="v">@T[$"analysis.mode.{mode.ToString().ToLowerInvariant()}"]</span>
+                        </button>
+                    }
+                </div>
+
+                @if (_mode == ScheduleMode.Window)
+                {
+                    <div class="window">
+                        <label>
+                            <span class="label">@T["analysis.from"]</span>
+                            <input type="time" value="@_start.ToString("HH\\:mm")"
+                                   @onchange="e => SetStart(e.Value?.ToString())" />
+                        </label>
+                        <label>
+                            <span class="label">@T["analysis.to"]</span>
+                            <input type="time" value="@_end.ToString("HH\\:mm")"
+                                   @onchange="e => SetEnd(e.Value?.ToString())" />
+                        </label>
+                    </div>
+                }
+
+                <label class="gap">
+                    <span class="field">@T["analysis.gap"]</span>
+                    @* A pause, not a speed. Phrased as "wait this long between photographs"
+                       because that is the thing the machine actually does, and because a person
+                       deciding how much of their laptop to give away thinks in how-often, not in
+                       photos-per-hour. *@
+                    <input type="range" min="0" max="120" step="5" value="@((int)_gap.TotalSeconds)"
+                           @onchange="e => SetGap(e.Value?.ToString())" />
+                    <span class="n">@T.Format("analysis.gapValue", (int)_gap.TotalSeconds)</span>
+                </label>
+            </section>
+
+            @* Hardware. Below the schedule because it is the rarer decision — most people set a
+               schedule once and never touch this — and because it only makes sense after you know
+               what the queue is for. *@
+            <section class="hardware">
+                <h3 class="label">@T["analysis.hardware"]</h3>
+
+                <p class="devices">
+                    @foreach (AcceleratorDevice device in Pipeline.Devices)
+                    {
+                        <span class="dev">@device.Kind.ToString().ToUpperInvariant()<span class="sep">·</span>@device.Provider</span>
+                    }
+                </p>
+
+                <div class="choices" role="radiogroup" aria-label="@T["analysis.hardware"]">
+                    @foreach (AcceleratorPreference option in _accelerators)
+                    {
+                        <button type="button"
+                                class="facet @(_accelerator == option ? "on" : null)"
+                                role="radio"
+                                aria-checked="@(_accelerator == option ? "true" : "false")"
+                                @onclick="() => SetAccelerator(option)">
+                            <span class="v">@T[$"analysis.accel.{option.ToString().ToLowerInvariant()}"]</span>
+                        </button>
+                    }
+                </div>
+
+                @* Said plainly rather than hidden. A model picks its hardware when it opens and
+                   keeps it for the life of the process, so this is a promise about next time. *@
+                @* What the setting resolves to, because "Automatic" resolves differently per
+                   stage and a person who picked it cannot otherwise tell. *@
+                <p class="note">
+                    @if (Pipeline.AcceleratedStages.Count == 0)
+                    {
+                        @T["analysis.accelNone"]
+                    }
+                    else
+                    {
+                        @T.Format("analysis.accelUsedBy", string.Join(", ",
+                            Pipeline.AcceleratedStages.Select(s => T[$"analysis.stage.{s.Slug()}"])))
+                    }
+                </p>
+
+                @if (_acceleratorChanged)
+                {
+                    <p class="note">@T["analysis.accelRestart"]</p>
+                }
+            </section>
+
+            <div class="actions">
+                <button type="button" class="btn btn-primary" disabled="@(_running || !_anyWork)"
+                        @onclick="RunNow">@T["analysis.runNow"]</button>
+                @if (Pipeline.State.NextOpening is { } opens)
+                {
+                    <span class="stat">@T.Format("analysis.opensAt", opens.ToString("HH:mm"))</span>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    /// <summary>Raised when the panel should close.</summary>
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private static readonly ScheduleMode[] _modes =
+        [ScheduleMode.Always, ScheduleMode.Window, ScheduleMode.Off];
+
+    private ElementReference _root;
+    private IReadOnlyList<StageStatus> _stages = [];
+    private ScheduleMode _mode;
+    private TimeOnly _start;
+    private TimeOnly _end;
+    private TimeSpan _gap;
+    private bool _running;
+
+    private static readonly AcceleratorPreference[] _accelerators =
+    [
+        AcceleratorPreference.Auto,
+        AcceleratorPreference.Cpu,
+        AcceleratorPreference.Gpu,
+        AcceleratorPreference.Npu,
+    ];
+
+    private AcceleratorPreference _accelerator;
+    private bool _acceleratorChanged;
+
+    private bool _anyWork => _stages.Any(stage => stage.HasWork);
+
+    private int _stuck => _stages.Count == 0 ? 0 : _stages.Max(stage => stage.Stuck);
+
+    protected override async Task OnInitializedAsync()
+    {
+        PipelineSchedule schedule = Pipeline.Schedule;
+        _mode = schedule.Mode;
+        _start = schedule.Start;
+        _end = schedule.End;
+        _gap = schedule.Gap;
+        _accelerator = Pipeline.Accelerator;
+
+        Pipeline.Changed += OnPipelineChanged;
+        await Pipeline.RefreshAsync();
+        await LoadStagesAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await _root.FocusAsync();
+        }
+    }
+
+    private async Task LoadStagesAsync()
+    {
+        _stages = await Pipeline.StatusAsync();
+        StateHasChanged();
+    }
+
+    private void OnPipelineChanged() => _ = InvokeAsync(LoadStagesAsync);
+
+    private Task OnKey(KeyboardEventArgs e) =>
+        e.Key == "Escape" ? OnClose.InvokeAsync() : Task.CompletedTask;
+
+    private Task SetMode(ScheduleMode mode)
+    {
+        _mode = mode;
+        return SaveAsync();
+    }
+
+    private Task SetStart(string? value)
+    {
+        if (TimeOnly.TryParse(value, out TimeOnly parsed))
+        {
+            _start = parsed;
+        }
+
+        return SaveAsync();
+    }
+
+    private Task SetEnd(string? value)
+    {
+        if (TimeOnly.TryParse(value, out TimeOnly parsed))
+        {
+            _end = parsed;
+        }
+
+        return SaveAsync();
+    }
+
+    private Task SetGap(string? value)
+    {
+        if (int.TryParse(value, out int seconds))
+        {
+            _gap = TimeSpan.FromSeconds(seconds);
+        }
+
+        return SaveAsync();
+    }
+
+    // Saved on every change rather than behind an apply button. There is nothing here that is
+    // dangerous to get half-right for a few seconds, and a schedule that only takes effect once
+    // you find the button is a schedule people believe they set and did not.
+    private Task SaveAsync() =>
+        Pipeline.SetScheduleAsync(new PipelineSchedule(_mode, _start, _end, _gap));
+
+    private async Task SetAccelerator(AcceleratorPreference preference)
+    {
+        _accelerator = preference;
+        _acceleratorChanged = preference != Pipeline.Accelerator;
+        await Pipeline.SetAcceleratorAsync(preference);
+    }
+
+    private async Task RetryStuck()
+    {
+        await Pipeline.RetryStuckAsync();
+        await LoadStagesAsync();
+    }
+
+    private async Task RunNow()
+    {
+        _running = true;
+
+        try
+        {
+            await Pipeline.RunNowAsync();
+        }
+        finally
+        {
+            _running = false;
+            await LoadStagesAsync();
+        }
+    }
+
+    public void Dispose() => Pipeline.Changed -= OnPipelineChanged;
+}

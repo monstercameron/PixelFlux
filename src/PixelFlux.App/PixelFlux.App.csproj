@@ -1,0 +1,64 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <!--
+    PixelFlux.App — the desktop shell: .NET MAUI hosting a Blazor Hybrid WebView.
+
+    Windows is the primary and only built target. macOS via Mac Catalyst is intended to remain
+    practical, so the rule is: nothing in Components/ or Services/ may reference a Windows type
+    directly. Platform-specific behaviour (power state, idle detection, HEIF decoding, folder
+    picking) goes behind an interface in Core and is implemented under Platforms/. Adding
+    `net10.0-maccatalyst` to TargetFrameworks below plus a Platforms/MacCatalyst implementation
+    of those interfaces should be the whole port.
+  -->
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-windows10.0.19041.0</TargetFrameworks>
+
+    <OutputType>Exe</OutputType>
+    <RootNamespace>PixelFlux.App</RootNamespace>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <EnableDefaultCssItems>false</EnableDefaultCssItems>
+    <MauiXamlInflator>SourceGen</MauiXamlInflator>
+
+    <ApplicationTitle>PixelFlux</ApplicationTitle>
+    <ApplicationId>com.pixelflux.app</ApplicationId>
+    <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+
+    <!-- Unpackaged: run straight from bin/ without MSIX signing during prototyping. -->
+    <WindowsPackageType>None</WindowsPackageType>
+
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.19041.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.19041.0</TargetPlatformMinVersion>
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
+
+    <!-- Razor components are internal UI, not a public API surface. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#111318" />
+    <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#111318" BaseSize="128,128" />
+    <MauiImage Include="Resources\Images\*" />
+    <MauiFont Include="Resources\Fonts\*" />
+    <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- VersionOverride is how a Central Package Management repo consumes the SDK-supplied
+         $(MauiVersion): the workload decides the version, not Directory.Packages.props. -->
+    <PackageReference Include="Microsoft.Maui.Controls" VersionOverride="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" VersionOverride="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PixelFlux.Core\PixelFlux.Core.csproj" />
+    <ProjectReference Include="..\PixelFlux.Storage\PixelFlux.Storage.csproj" />
+    <ProjectReference Include="..\PixelFlux.Ai\PixelFlux.Ai.csproj" />
+  </ItemGroup>
+
+  <!-- Swaps in an ONNX Runtime native that has execution providers compiled in. -->
+  <Import Project="../../runtime/Runtime.targets" />
+
+</Project>

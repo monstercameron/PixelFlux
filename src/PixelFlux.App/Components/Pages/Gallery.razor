@@ -1,0 +1,1419 @@
+@page "/"
+@using System.Globalization
+@using PixelFlux.App.Services
+@using PixelFlux.Core.Index
+@using PixelFlux.Core.Ingest
+@using PixelFlux.Core.Model
+@using PixelFlux.Core.Search
+@using PixelFlux.Ai.Semantic
+@using PixelFlux.Core.Pipeline
+@inject LibraryService Library
+@inject Strings T
+@inject IJSRuntime JS
+@inject PipelineService Pipeline
+@inject ModelService Models
+@inject SourceService Sources
+@implements IDisposable
+
+@*
+    The contact sheet, and everything that narrows it.
+
+    Three ways in, and they compose: the time rail selects a period, the filter panel selects
+    facets, the search box adds text. All three build one PhotoQuery, and whatever is active
+    appears as removable chips above the grid so the current view is never a mystery.
+
+    Everything here is reachable from the keyboard. The grid uses a roving tabindex — one cell
+    is tabbable at a time and the arrow keys move which one — because a 2,000-cell grid where
+    every cell is a tab stop is not navigable, it is a punishment.
+*@
+
+<div class="shell @(T.IsRightToLeft ? "rtl" : null)" dir="@(T.IsRightToLeft ? "rtl" : "ltr")"
+     @onkeydown="OnShellKey" tabindex="-1">
+
+    <header class="topbar">
+        @* dir=ltr: a brand name is not a sentence and must not reorder. Without this the
+           wordmark renders "FLUXPIXEL" in Arabic. *@
+        <div class="wordmark" dir="ltr"><b>Pixel</b><i>Flux</i></div>
+
+        <ViewSwitch Current="photos" Count="_faceCount" />
+
+        <div class="search">
+            <input id="pf-search"
+                   type="search"
+                   value="@_search"
+                   @oninput="OnSearchInput"
+                   @onfocus="() => _typing = true"
+                   @onblur="() => _typing = false"
+                   placeholder="@T["search.placeholder"]"
+                   aria-label="@T["search.label"]"
+                   spellcheck="false" />
+            <span class="glyph" aria-hidden="true">⌕</span>
+        </div>
+
+        <div class="tools">
+            <button class="tool @(ActiveFilterCount > 0 ? "armed" : null)"
+                    aria-pressed="@(_showFilters ? "true" : "false")"
+                    title="@T["tool.filters"]"
+                    @onclick="() => _showFilters = !_showFilters">
+                <span>@T["tool.filters"]</span>
+                @if (ActiveFilterCount > 0)
+                {
+                    <span class="pip">@ActiveFilterCount</span>
+                }
+            </button>
+
+            <span class="tool-sep"></span>
+
+            <label class="sortpick">
+                <span class="label">@T["tool.sort"]</span>
+                <select value="@((int)_order)" @onchange="OnOrderChanged" aria-label="@T["tool.sort"]">
+                    @foreach ((PhotoOrder value, string key) in SortOptions)
+                    {
+                        <option value="@((int)value)">@T[key]</option>
+                    }
+                </select>
+            </label>
+
+            <span class="tool-sep"></span>
+
+            <button class="tool" title="@T["tool.smaller"]" aria-label="@T["tool.smaller"]"
+                    disabled="@(_cell <= MinCell)" @onclick="() => Zoom(-30)">−</button>
+            <button class="tool" title="@T["tool.larger"]" aria-label="@T["tool.larger"]"
+                    disabled="@(_cell >= MaxCell)" @onclick="() => Zoom(30)">+</button>
+            <button class="tool" title="@T["tool.shortcuts"]" aria-label="@T["tool.shortcuts"]"
+                    @onclick="() => _showKeys = true">?</button>
+
+            <span class="tool-sep"></span>
+
+            <label class="sortpick lang">
+                <span class="label">@T["language"]</span>
+                <select value="@T.Current.Code" @onchange="OnLanguageChanged" aria-label="@T["language"]">
+                    @foreach (Strings.Language language in Strings.Available)
+                    {
+                        <option value="@language.Code">@language.NativeName</option>
+                    }
+                </select>
+            </label>
+
+            <button class="btn btn-primary" @onclick="() => _showSources = true" disabled="@Sources.Scanning">
+                @(Sources.Scanning ? T["tool.importing"] : T["tool.add"])
+            </button>
+        </div>
+    </header>
+
+    <div class="body @(_showFilters ? "with-filters" : null)">
+
+        <TimeRail Rows="_rail" Selection="_period" SelectionChanged="OnPeriodChanged" />
+
+        @if (_showFilters)
+        {
+            <div class="sidepanel">
+                <AlbumPanel Albums="_albums"
+                            Selected="_albumId"
+                            TotalPhotos="_status.Total"
+                            OnSelect="OnAlbumSelected"
+                            OnCreate="CreateAlbum"
+                            OnDelete="DeleteAlbum"
+                            OnDropOnAlbum="DropOnAlbum" />
+
+                @* The @ on each of these six matters. They are string parameters, and Razor reads
+                   an unprefixed value on a string parameter as literal text — so CameraModel="_camera"
+                   handed the panel the eight characters "_camera" rather than the field. Every facet
+                   then believed something was selected: no chip could ever highlight, because no real
+                   camera is named "_camera", and every section opened itself. *@
+                <FilterPanel Facets="_facets"
+                         CameraModel="@_camera"
+                         SourceFolder="@_folder"
+                         Object="@_object"
+                         Tag="@_tag"
+                         City="@_city"
+                         Country="@_country"
+                         MinRating="_minRating"
+                         FavouritesOnly="_favourites"
+                         OnCameraChanged="v => Apply(() => _camera = v)"
+                         OnFolderChanged="v => Apply(() => _folder = v)"
+                         OnObjectChanged="v => Apply(() => _object = v)"
+                         OnTagChanged="v => Apply(() => _tag = v)"
+                         OnCityChanged="v => Apply(() => _city = v)"
+                         OnCountryChanged="v => Apply(() => _country = v)"
+                         OnRatingChanged="v => Apply(() => _minRating = v)"
+                         OnFavouritesChanged="v => Apply(() => _favourites = v)"
+                         OnClearAll="ClearAllFilters" />
+            </div>
+        }
+
+        <main class="sheet">
+            <div class="sheet-head">
+                <h1>@Heading</h1>
+                <span class="sub mono">@Subheading</span>
+                @if (_searchNote is { } note)
+                {
+                    <span class="searchnote">@note</span>
+                }
+            </div>
+
+            @if (_selected.Count > 0)
+            {
+                <SelectionBar Count="_selected.Count"
+                              Albums="_albums"
+                              CurrentAlbumId="_albumId"
+                              OnAddTo="AddSelectionTo"
+                              OnMoveTo="MoveSelectionTo"
+                              OnRemove="RemoveSelectionFromAlbum"
+                              OnClear="ClearSelection" />
+            }
+
+            @if (ActiveFilterCount > 0)
+            {
+                <div class="chips" role="list" aria-label="@T["filter.active"]">
+                    @foreach ((string label, Action clear) in ActiveFilters())
+                    {
+                        <button type="button" class="chip" role="listitem"
+                                title="@T["filter.remove"]"
+                                @onclick="() => Apply(clear)">
+                            <span>@label</span>
+                            <span class="x" aria-hidden="true">✕</span>
+                        </button>
+                    }
+                    <button type="button" class="chip clear" @onclick="ClearAllFilters">@T["filter.clearAll"]</button>
+                </div>
+            }
+
+            @if (_photos.Count == 0)
+            {
+                <div class="empty">
+                    @if (_albumId is not null && ActiveFilterCount == 0 && _search.Length == 0)
+                    {
+                        <h2>@Heading</h2>
+                        <p>@T["albums.empty"]</p>
+                        <button class="btn btn-primary" @onclick="() => OnAlbumSelected(null)">@T["albums.all"]</button>
+                    }
+                    else if (ActiveFilterCount > 0 || _search.Length > 0)
+                    {
+                        <h2>@T["empty.filtered.title"]</h2>
+                        <p>@T["empty.filtered.body"]</p>
+                        <button class="btn btn-primary" @onclick="ClearAllFilters">@T["empty.filtered.action"]</button>
+                    }
+                    else
+                    {
+                        <h2>@T["empty.none.title"]</h2>
+                        <p>@T["empty.none.body"]</p>
+                        <button class="btn btn-primary" @onclick="() => _showSources = true" disabled="@Sources.Scanning">
+                            @(Sources.Scanning ? T["tool.importing"] : T["tool.add"])
+                        </button>
+                    }
+                </div>
+            }
+            else
+            {
+                @* role=grid + a roving tabindex: one stop for the whole grid, arrows move
+                   within it. Making all 2,000 cells tabbable would bury every other control
+                   in the app behind two thousand presses of Tab. *@
+                <div class="grid" style="--cell:@(_cell)px"
+                     role="grid"
+                     aria-label="@T["heading.all"]"
+                     @ref="_gridElement"
+                     @onkeydown="OnGridKey">
+                    @foreach ((PhotoRecord photo, int index) in _photos.Select((p, i) => (p, i)))
+                    {
+                        int i = index;
+
+                        @if (photo.State == ProcessingState.Unreadable)
+                        {
+                            <div class="frame unreadable" role="gridcell"
+                                 title="@photo.FileName — @photo.StateDetail">
+                                <span class="why">@T["frame.unreadable"]</span>
+                            </div>
+                        }
+                        else
+                        {
+                            <button type="button"
+                                    class="frame @(_openIndex == i ? "selected" : null) @(_focus == i ? "focused" : null) @(_selected.Contains(photo.Id) ? "picked" : null)"
+                                    role="gridcell"
+                                    aria-selected="@(_selected.Contains(photo.Id) ? "true" : "false")"
+                                    tabindex="@(_focus == i ? 0 : -1)"
+                                    title="@Tooltip(photo)"
+                                    draggable="@(_selected.Contains(photo.Id) ? "true" : "false")"
+                                    @ondragstart="() => OnDragStart(photo.Id)"
+                                    @onfocus="() => _focus = i"
+                                    @onclick="args => OnFrameClick(i, args)">
+                                <img src="@LibraryService.DerivativeUrl(photo.ThumbnailKey)"
+                                     alt="@photo.DisplayTitle"
+                                     loading="lazy"
+                                     decoding="async" />
+                                @* The tick is its own hit target so a plain click can still
+                                   open the photo when nothing is selected yet. Once anything is
+                                   selected the whole frame toggles instead — the standard
+                                   photo-app behaviour, and the reason there is no separate
+                                   "selection mode" button. *@
+                                <span class="pick"
+                                      role="checkbox"
+                                      aria-checked="@(_selected.Contains(photo.Id) ? "true" : "false")"
+                                      title="@T["select.toggle"]"
+                                      @onclick:stopPropagation="true"
+                                      @onclick="() => ToggleSelection(photo.Id)">✓</span>
+                                <span class="idx">@((i + 1).ToString("0000", CultureInfo.InvariantCulture))</span>
+                                @if (photo.Rating > 0)
+                                {
+                                    <span class="rating" aria-label="@T.Format("filter.starsAndUp", photo.Rating)">
+                                        @(new string('★', photo.Rating))
+                                    </span>
+                                }
+                                @if (photo.State is ProcessingState.Pending or ProcessingState.Processing)
+                                {
+                                    <span class="state" title="@T["frame.queued"]"></span>
+                                }
+                                else if (photo.State == ProcessingState.Failed)
+                                {
+                                    <span class="state failed" title="@photo.StateDetail"></span>
+                                }
+                            </button>
+                        }
+                    }
+                </div>
+            }
+        </main>
+    </div>
+
+    <footer class="statusbar">
+        <span class="stat"><b>@_status.Total</b>&nbsp;@T["status.photos"]</span>
+
+        @if (_photos.Count != _status.Total)
+        {
+            <span class="stat"><b>@_photos.Count</b>&nbsp;@T["status.shown"]</span>
+        }
+
+        @if (_status.Unreadable > 0)
+        {
+            <span class="stat"><b>@_status.Unreadable</b>&nbsp;@T["status.unreadable"]</span>
+        }
+
+        <span class="spacer"></span>
+
+        @if (_flash is { } flash)
+        {
+            <span class="stat flash">@flash</span>
+        }
+
+        @if (Sources.Progress is { } line)
+        {
+            <span class="stat">@line</span>
+        }
+
+        @* "Read photos" and "Describe photos" used to sit here, each starting its own sweep of
+           the whole library. Both are gone, and not for tidiness: the analysis queue now runs
+           those same two stages in a defined order, records what it has done, and reuses results.
+           Two systems writing the same columns by different rules is how a library ends up with a
+           description from one model and a vector built from a different one. The manual trigger
+           they provided lives on as "Run now" in the analysis panel, which goes through the queue.
+        *@
+
+        @* The lamp is a button. Everything it reports on — analysis in progress, photographs
+           waiting — is work the user did not start and may want to reschedule or run now, and
+           the readout was already the thing they would look at to ask about it. *@
+        <button type="button"
+                class="safelight @(_status.Working || Sources.Scanning || _describing || _reading || Pipeline.State.Running ? "on" : null)"
+                title="@T["analysis.title"]"
+                @onclick="() => _showAnalysis = true">
+            <span class="lamp"></span>
+            @if (Sources.Scanning)
+            {
+                <span>@T["status.reading"]</span>
+            }
+            else if (_status.Working)
+            {
+                <span>@T.Format("status.analysing", _status.Processing)</span>
+            }
+            else if (_describing)
+            {
+                <span>@_describeLine</span>
+            }
+            else if (_reading)
+            {
+                <span>@_readLine</span>
+            }
+            @* The analysis queue, which runs on its own schedule and is the only thing on this
+               bar the user did not start. It reports last, after everything they did start,
+               because a background task should never be what the eye lands on first. *@
+            else if (Pipeline.State is { Running: true, Stage: { } stage })
+            {
+                <span>@T.Format($"pipeline.{stage.Slug()}", Pipeline.State.FileName ?? string.Empty)</span>
+            }
+            else if (Pipeline.State.Waiting > 0)
+            {
+                <span>@T.Format("pipeline.waiting", Pipeline.State.Waiting)</span>
+            }
+            else if (_status.Pending > 0)
+            {
+                <span>@T.Format("status.queued", _status.Pending)</span>
+            }
+            else
+            {
+                <span>@T["status.idle"]</span>
+            }
+        </button>
+    </footer>
+
+    @if (_showAnalysis)
+    {
+        <AnalysisPanel OnClose="() => _showAnalysis = false" />
+    }
+
+    @if (_showSetup)
+    {
+        <ModelSetup OnClose="CloseSetup" />
+    }
+
+    @if (_showSources)
+    {
+        <SourcePanel OnClose="CloseSources" />
+    }
+</div>
+
+@if (_openIndex is { } open && open < _photos.Count)
+{
+    <Viewer Photo="_photos[open]"
+            Tags="_openTags"
+            Segments="_openSegments"
+            PersonNames="_openPersonNames"
+            ShowMasks="_showMasks"
+            ShowMasksChanged="v => _showMasks = v"
+            OnPickObject="PickObject"
+            Vocabulary="_vocabulary"
+            OnLabelSegment="LabelSegment"
+            OnAddTag="AddTag"
+            OnRemoveTag="RemoveTag"
+            HasPrevious="open > 0"
+            HasNext="open < _photos.Count - 1"
+            OnClose="Close"
+            OnStep="Step" />
+}
+
+@if (_showKeys)
+{
+    <ShortcutHelp OnClose="() => _showKeys = false" />
+}
+
+@code {
+    private const int MinCell = 110;
+    private const int MaxCell = 340;
+
+    private static readonly (PhotoOrder Value, string Key)[] SortOptions =
+    [
+        (PhotoOrder.CapturedDescending, "sort.captured.desc"),
+        (PhotoOrder.CapturedAscending, "sort.captured.asc"),
+        (PhotoOrder.IndexedDescending, "sort.indexed.desc"),
+        (PhotoOrder.FileName, "sort.filename"),
+        (PhotoOrder.RatingDescending, "sort.rating.desc"),
+        (PhotoOrder.FileSizeDescending, "sort.size.desc"),
+        (PhotoOrder.Camera, "sort.camera"),
+        (PhotoOrder.Folder, "sort.folder"),
+        (PhotoOrder.Shuffle, "sort.shuffle"),
+    ];
+
+    /// <summary>
+    /// Opens filtered to one detected object, from <c>/?object=bicycle</c>.
+    /// </summary>
+    /// <remarks>
+    /// This is what a label click from the faces page arrives as. A query parameter rather than
+    /// shared state between the two pages, because it makes the filtered view a real place: it
+    /// can be linked to, it survives a reload, and the two pages stay independent of each other.
+    /// </remarks>
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "object")]
+    public string? ObjectFilter { get; set; }
+
+    /// <summary>Opens with a search already run, from <c>/?q=red+car</c>.</summary>
+    /// <remarks>
+    /// The same reasoning as the object filter: a result worth arriving at is worth being able
+    /// to link to. It is also the only way to exercise the search box from outside the
+    /// application, which is otherwise a surface that can only be tested by hand.
+    /// </remarks>
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "q")]
+    public string? QueryText { get; set; }
+
+    private IReadOnlyList<PhotoRecord> _photos = [];
+    private IReadOnlyList<RailRow> _rail = [];
+    private IReadOnlyList<PhotoTag> _openTags = [];
+    private IReadOnlyList<PhotoSegmentRecord> _openSegments = [];
+
+    // Which person outlines belong to a named face, worked out when the photograph opens.
+    // Recomputed rather than stored: either layer can change under it — a re-sweep, a name typed
+    // a moment ago — and a cached answer would be wrong exactly when somebody had just acted.
+    private IReadOnlyDictionary<long, string> _openPersonNames = new Dictionary<long, string>();
+    private IReadOnlyDictionary<string, IReadOnlyList<(string Value, int Count)>> _facets =
+        new Dictionary<string, IReadOnlyList<(string, int)>>();
+    private LibraryStatus _status;
+
+    /// <summary>Faces in the library, shown on the view switch so the page advertises itself.</summary>
+    private int _faceCount;
+
+    /// <summary>Words already used here, offered as completions while labelling.</summary>
+    private IReadOnlyList<string> _vocabulary = [];
+
+    /// <summary>What the search did to the query, shown beside the result count.</summary>
+    private string? _searchNote;
+
+    private bool _describing;
+    private string? _describeLine;
+    private int _described;
+    private int _undescribed;
+
+    private bool _reading;
+    private string? _readLine;
+    private int _read;
+    private int _unread;
+
+    private string _search = string.Empty;
+    private TimeRail.Period? _period;
+    private string? _camera;
+    private string? _folder;
+    private string? _tag;
+    private string? _object;
+    private string? _city;
+    private string? _country;
+    private int _minRating;
+    private bool _favourites;
+    private PhotoOrder _order = PhotoOrder.CapturedDescending;
+
+    private IReadOnlyList<PhotoCollection> _albums = [];
+    private readonly HashSet<long> _selected = [];
+    private long? _albumId;
+    private int _anchor;           // shift-click range origin
+    private string? _flash;        // transient "added N to X" message
+
+    // Sticky across photographs, and across closing and reopening the viewer. A per-photo
+    // toggle makes the user re-assert the same preference on every image.
+    private bool _showMasks;
+
+    private bool _showFilters = true;
+    private bool _showKeys;
+    private bool _typing;          // suppresses single-letter shortcuts while the search box has focus
+    private int _cell = 180;
+    private int _focus;            // the roving tabindex position
+    private int? _openIndex;
+
+    private ElementReference _gridElement;
+    private CancellationTokenSource? _searchDebounce;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Library.LibraryChanged += OnLibraryChanged;
+        Pipeline.Changed += OnPipelineChanged;
+        Sources.Changed += OnPipelineChanged;
+        T.LanguageChanged += OnLanguageSwitched;
+        T.UseSystemLanguage();
+
+        // Applied before the first query, so the page never renders the whole library and then
+        // visibly narrows a frame later.
+        if (!string.IsNullOrWhiteSpace(ObjectFilter))
+        {
+            _object = ObjectFilter;
+            _showFilters = true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(QueryText))
+        {
+            _search = QueryText;
+        }
+
+        await RefreshAsync();
+        await OfferSetupAsync();
+    }
+
+    public void Dispose()
+    {
+        Library.LibraryChanged -= OnLibraryChanged;
+        Pipeline.Changed -= OnPipelineChanged;
+        Sources.Changed -= OnPipelineChanged;
+        T.LanguageChanged -= OnLanguageSwitched;
+        _searchDebounce?.Cancel();
+        _searchDebounce?.Dispose();
+    }
+
+    private void OnLibraryChanged() => _ = InvokeAsync(RefreshAsync);
+
+    // Repaints the status bar only. The queue changes what a photograph knows about itself, not
+    // which photographs are on screen, so a full refresh here would re-run the query and rebuild
+    // the grid once per analysed photograph — for a line of text.
+    private void OnPipelineChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private const string SetupDismissed = "setup.dismissed";
+
+    private async Task OfferSetupAsync()
+    {
+        if (!Models.NothingInstalled)
+        {
+            return;
+        }
+
+        if (await Library.GetSettingAsync(SetupDismissed) is "1")
+        {
+            return;
+        }
+
+        _showSetup = true;
+        StateHasChanged();
+    }
+
+    private async Task CloseSources()
+    {
+        _showSources = false;
+
+        // The folder list is the one dialog that can change what the gallery contains, so the
+        // grid is re-read on the way out rather than waiting for something else to notice.
+        await RefreshAsync();
+    }
+
+    private async Task CloseSetup()
+    {
+        _showSetup = false;
+
+        // Remembered only when they closed it having installed nothing. Somebody who installed a
+        // model and closed the dialog has answered the question; somebody who declined outright
+        // has answered it too, and neither should be asked again on the next launch.
+        await Library.SetSettingAsync(SetupDismissed, "1");
+    }
+
+    private bool _showAnalysis;
+
+    // Opened once, on a library that has no models at all, because that is the only moment the
+    // application cannot do the thing it exists to do and the user has no way to know why.
+    // Dismissing it is remembered: nobody should be asked twice.
+    private bool _showSetup;
+    private bool _showSources;
+
+    private void OnLanguageSwitched() => _ = InvokeAsync(StateHasChanged);
+
+    private Task OnLanguageChanged(ChangeEventArgs args)
+    {
+        T.Use(args.Value?.ToString() ?? "en");
+        return Task.CompletedTask;
+    }
+
+    // ------------------------------------------------------------------ keyboard
+
+    /// <summary>
+    /// Application-wide shortcuts.
+    /// </summary>
+    /// <remarks>
+    /// Guarded by <c>_typing</c>. Single-letter shortcuts and a text field cannot coexist
+    /// without it — typing "f" into the search box would toggle the filter panel, and a search
+    /// box that fights the user is worse than no shortcuts at all. Escape is deliberately
+    /// exempt, because escaping out of a field is exactly what people expect it to do.
+    /// </remarks>
+    private async Task OnShellKey(KeyboardEventArgs args)
+    {
+        // Ctrl+A is handled below; every other modified chord belongs to the browser or to the
+        // text field and must pass straight through.
+        bool selectAll = args.Key is "a" or "A" && (args.CtrlKey || args.MetaKey);
+        if ((args.CtrlKey || args.AltKey || args.MetaKey) && !selectAll)
+        {
+            return;
+        }
+
+        if (args.Key is "a" or "A" && (args.CtrlKey || args.MetaKey))
+        {
+            SelectAll();
+            return;
+        }
+
+        if (args.Key == "Escape")
+        {
+            if (_showKeys)
+            {
+                _showKeys = false;
+            }
+            else if (_openIndex is not null)
+            {
+                Close();
+            }
+            else if (_selected.Count > 0)
+            {
+                // Selection unwinds before filters do: it is the more recent and more transient
+                // thing the user set up, so it is what Escape should reach for first.
+                ClearSelection();
+            }
+            else if (_search.Length > 0)
+            {
+                _search = string.Empty;
+                await RefreshAsync();
+            }
+            else if (ActiveFilterCount > 0)
+            {
+                await ClearAllFilters();
+            }
+
+            return;
+        }
+
+        if (_typing)
+        {
+            return;
+        }
+
+        switch (args.Key)
+        {
+            case "/":
+                await JS.InvokeVoidAsync("pixelflux.focusId", "pf-search");
+                break;
+            case "f" or "F":
+                _showFilters = !_showFilters;
+                break;
+            case "?":
+                _showKeys = true;
+                break;
+            case "+" or "=":
+                Zoom(30);
+                break;
+            case "-" or "_":
+                Zoom(-30);
+                break;
+        }
+    }
+
+    /// <summary>Arrow-key navigation within the grid.</summary>
+    /// <remarks>
+    /// The column count comes from the browser rather than from arithmetic here, because the
+    /// grid is <c>auto-fill</c> and only the layout engine knows how many cells it decided to
+    /// fit at the current width and zoom level.
+    /// <para>
+    /// Left and Right are swapped under a right-to-left language. In Arabic the grid flows from
+    /// the right, so the Right arrow must move towards the *earlier* photo — matching the visual
+    /// direction, not the array index.
+    /// </para>
+    /// </remarks>
+    private async Task OnGridKey(KeyboardEventArgs args)
+    {
+        if (_photos.Count == 0 || _openIndex is not null)
+        {
+            return;
+        }
+
+        int columns = await JS.InvokeAsync<int>("pixelflux.gridColumns", _gridElement);
+        int step = T.IsRightToLeft ? -1 : 1;
+        int target = _focus;
+
+        switch (args.Key)
+        {
+            case "ArrowRight": target = _focus + step; break;
+            case "ArrowLeft": target = _focus - step; break;
+            case "ArrowDown": target = _focus + columns; break;
+            case "ArrowUp": target = _focus - columns; break;
+            case "Home": target = 0; break;
+            case "End": target = _photos.Count - 1; break;
+            case "PageDown": target = _focus + (columns * 3); break;
+            case "PageUp": target = _focus - (columns * 3); break;
+
+            case "Enter" or " ":
+                Open(_focus);
+                return;
+
+            default:
+                return;
+        }
+
+        _focus = Math.Clamp(target, 0, _photos.Count - 1);
+        StateHasChanged();
+        await JS.InvokeVoidAsync("pixelflux.revealCell", _gridElement, _focus);
+    }
+
+    // ------------------------------------------------------------------ selection
+
+    /// <summary>
+    /// What a click on a frame does, which depends on what is already selected.
+    /// </summary>
+    /// <remarks>
+    /// The rule is the one every photo application uses, and it exists so that browsing and
+    /// curating do not need a mode switch between them:
+    /// <list type="bullet">
+    /// <item><description>nothing selected — a click opens the photograph</description></item>
+    /// <item><description>something selected — a click toggles selection instead</description></item>
+    /// <item><description>Ctrl-click always toggles, Shift-click extends a range</description></item>
+    /// </list>
+    /// The tick in the corner is a separate hit target, so the very first selection can be made
+    /// without the click being interpreted as "open".
+    /// </remarks>
+    private void OnFrameClick(int index, MouseEventArgs args)
+    {
+        long id = _photos[index].Id;
+        _focus = index;
+
+        if (args.ShiftKey && _selected.Count > 0)
+        {
+            int from = Math.Min(_anchor, index);
+            int to = Math.Max(_anchor, index);
+            for (int i = from; i <= to; i++)
+            {
+                _selected.Add(_photos[i].Id);
+            }
+
+            return;
+        }
+
+        if (args.CtrlKey || args.MetaKey || _selected.Count > 0)
+        {
+            ToggleSelection(id);
+            _anchor = index;
+            return;
+        }
+
+        Open(index);
+    }
+
+    private void ToggleSelection(long photoId)
+    {
+        if (!_selected.Remove(photoId))
+        {
+            _selected.Add(photoId);
+            _anchor = _photos.ToList().FindIndex(p => p.Id == photoId);
+        }
+
+        StateHasChanged();
+    }
+
+    private void ClearSelection()
+    {
+        _selected.Clear();
+        StateHasChanged();
+    }
+
+    private void SelectAll()
+    {
+        foreach (PhotoRecord photo in _photos)
+        {
+            _selected.Add(photo.Id);
+        }
+
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Starts a drag. If the dragged frame was not already selected, it becomes the selection.
+    /// </summary>
+    /// <remarks>
+    /// Dragging an unselected photo while others are selected is ambiguous, and the least
+    /// surprising reading is "I meant this one" — the same thing a file manager does.
+    /// </remarks>
+    private void OnDragStart(long photoId)
+    {
+        if (!_selected.Contains(photoId))
+        {
+            _selected.Clear();
+            _selected.Add(photoId);
+            StateHasChanged();
+        }
+    }
+
+    // ------------------------------------------------------------------ albums
+
+    private Task OnAlbumSelected(long? albumId) => Apply(() =>
+    {
+        _albumId = albumId;
+        // Leaving an album with a selection still held would let the next action apply to
+        // photos from a different scope than the one on screen.
+        _selected.Clear();
+    });
+
+    private async Task<string?> CreateAlbum(string name)
+    {
+        long? id = await Library.CreateAlbumAsync(name);
+        if (id is null)
+        {
+            return T["albums.duplicateName"];
+        }
+
+        await RefreshAsync();
+        return null;
+    }
+
+    private async Task DeleteAlbum(long albumId)
+    {
+        if (_albumId == albumId)
+        {
+            _albumId = null;
+        }
+
+        await Library.DeleteAlbumAsync(albumId);
+        await RefreshAsync();
+    }
+
+    private async Task AddSelectionTo(long albumId)
+    {
+        long[] ids = _selected.ToArray();
+        int added = await Library.AddToAlbumAsync(albumId, ids);
+        await FinishAlbumAction("select.added", added, albumId);
+    }
+
+    private async Task MoveSelectionTo(long albumId)
+    {
+        if (_albumId is not { } from)
+        {
+            // Nothing to move out of; treat it as an add rather than doing nothing silently.
+            await AddSelectionTo(albumId);
+            return;
+        }
+
+        long[] ids = _selected.ToArray();
+        int moved = await Library.MoveBetweenAlbumsAsync(from, albumId, ids);
+        await FinishAlbumAction("select.moved", moved, albumId);
+    }
+
+    private async Task RemoveSelectionFromAlbum()
+    {
+        if (_albumId is not { } album)
+        {
+            return;
+        }
+
+        long[] ids = _selected.ToArray();
+        int removed = await Library.RemoveFromAlbumAsync(album, ids);
+        await FinishAlbumAction("select.removed", removed, album);
+    }
+
+    /// <summary>
+    /// Handles a selection dropped onto an album row.
+    /// </summary>
+    /// <remarks>
+    /// Drag does what the context implies: from inside an album it <em>moves</em>, from the
+    /// whole library it <em>adds</em>. Dragging out of one album into another and having the
+    /// photo remain in both would not match what the gesture looks like it did.
+    /// </remarks>
+    private Task DropOnAlbum(long albumId)
+    {
+        if (_selected.Count == 0 || albumId == _albumId)
+        {
+            return Task.CompletedTask;
+        }
+
+        return _albumId is null ? AddSelectionTo(albumId) : MoveSelectionTo(albumId);
+    }
+
+    private async Task FinishAlbumAction(string messageKey, int count, long albumId)
+    {
+        string album = _albums.FirstOrDefault(a => a.Id == albumId)?.Name ?? string.Empty;
+        _flash = T.Format(messageKey, count, album);
+
+        _selected.Clear();
+        await RefreshAsync();
+
+        // Clear the confirmation after a few seconds. It is a receipt, not a status: leaving
+        // "Moved 4 to Trips" on screen indefinitely makes it read as the current state.
+        _ = ClearFlashLaterAsync();
+    }
+
+    private async Task ClearFlashLaterAsync()
+    {
+        await Task.Delay(4000);
+        _flash = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // ------------------------------------------------------------------ filters
+
+    private int ActiveFilterCount =>
+        (_period is null ? 0 : 1) + (_camera is null ? 0 : 1) + (_folder is null ? 0 : 1) +
+        (_tag is null ? 0 : 1) + (_object is null ? 0 : 1) +
+        (_city is null ? 0 : 1) + (_country is null ? 0 : 1) +
+        (_minRating > 0 ? 1 : 0) +
+        (_favourites ? 1 : 0);
+
+    private IEnumerable<(string Label, Action Clear)> ActiveFilters()
+    {
+        if (_period is { } period)
+        {
+            yield return (period.Label, () => _period = null);
+        }
+
+        if (_camera is { } camera)
+        {
+            yield return (camera, () => _camera = null);
+        }
+
+        if (_folder is { } folder)
+        {
+            yield return (ShortFolder(folder), () => _folder = null);
+        }
+
+        if (_object is { } detected)
+        {
+            yield return (detected, () => _object = null);
+        }
+
+        if (_tag is { } tag)
+        {
+            yield return ($"#{tag}", () => _tag = null);
+        }
+
+        // Country before city: it is the broader filter, and reading "United Kingdom · Bradford"
+        // left to right matches how the two were almost certainly applied.
+        if (_country is { } country)
+        {
+            yield return (country, () => _country = null);
+        }
+
+        if (_city is { } city)
+        {
+            yield return (city, () => _city = null);
+        }
+
+        if (_minRating > 0)
+        {
+            yield return (T.Format("filter.starsAndUp", _minRating), () => _minRating = 0);
+        }
+
+        if (_favourites)
+        {
+            yield return (T["filter.favourites"], () => _favourites = false);
+        }
+    }
+
+    private static string ShortFolder(string path)
+    {
+        string[] parts = path.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 0 ? path : parts[^1];
+    }
+
+    private string Heading
+    {
+        get
+        {
+            if (_search.Length > 0)
+            {
+                return T["heading.search"];
+            }
+
+            // The album name outranks everything else in the heading. When you are inside an
+            // album that is the single most important fact about what you are looking at.
+            if (_albumId is { } id && _albums.FirstOrDefault(a => a.Id == id) is { } album)
+            {
+                return album.Name;
+            }
+
+            return _period?.Label ?? (ActiveFilterCount > 0 ? T["heading.filtered"] : T["heading.all"]);
+        }
+    }
+
+    private string Subheading
+    {
+        get
+        {
+            if (_photos.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            DateTimeOffset newest = _photos.Max(p => p.CapturedUtc);
+            DateTimeOffset oldest = _photos.Min(p => p.CapturedUtc);
+            string span = newest.Year == oldest.Year
+                ? newest.Year.ToString(CultureInfo.CurrentCulture)
+                : $"{oldest.Year.ToString(CultureInfo.CurrentCulture)}–{newest.Year.ToString(CultureInfo.CurrentCulture)}";
+
+            return T.Format("heading.frames", _photos.Count, span);
+        }
+    }
+
+    private string Tooltip(PhotoRecord photo)
+    {
+        string when = photo.CaptureTimeIsExact
+            ? photo.CapturedUtc.ToString("d MMM yyyy", CultureInfo.CurrentCulture)
+            : $"~{photo.CapturedUtc.ToString("MMM yyyy", CultureInfo.CurrentCulture)}";
+
+        return photo.Camera.Model is { Length: > 0 } model
+            ? $"{photo.DisplayTitle}\n{when} · {model}"
+            : $"{photo.DisplayTitle}\n{when}";
+    }
+
+    /// <summary>
+    /// A short note on what the search actually did.
+    /// </summary>
+    /// <remarks>
+    /// Two things are worth saying out loud. A spelling correction, because otherwise the user
+    /// sees results for a word they did not type and cannot tell whether the app is being clever
+    /// or broken. And whether meaning contributed, because that is the difference between "your
+    /// library has no photograph with this word on it" and "your library has nothing that looks
+    /// like this" — a user deciding whether to rephrase needs to know which.
+    /// </remarks>
+    private string? Describe(SearchResult result)
+    {
+        var parts = new List<string>(2);
+
+        foreach ((string typed, string used) in result.Corrections)
+        {
+            parts.Add(T.Format("search.corrected", typed, used));
+        }
+
+        if (result.UsedSemantic)
+        {
+            parts.Add(T["search.byMeaning"]);
+        }
+
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
+    }
+
+    private PhotoQuery CurrentQuery() => new()
+    {
+        Text = string.IsNullOrWhiteSpace(_search) ? null : _search,
+        From = _period?.From,
+        To = _period?.To,
+        CameraModel = _camera,
+        SourceFolder = _folder,
+        Tags = _tag is null ? [] : [_tag],
+        Object = _object,
+        City = _city,
+        Country = _country,
+        CollectionId = _albumId,
+        MinRating = _minRating > 0 ? _minRating : null,
+        FavouritesOnly = _favourites ? true : null,
+        Order = _order,
+        Limit = 2000,
+    };
+
+    /// <summary>
+    /// Reloads everything: the photographs and all the chrome around them.
+    /// </summary>
+    /// <remarks>
+    /// For when the library itself has changed — an import, an album edit, a sweep finishing.
+    /// Typing in the search box calls <see cref="RefreshPhotosAsync" /> instead; see there for
+    /// why the difference matters.
+    /// </remarks>
+    private async Task RefreshAsync()
+    {
+        await RefreshPhotosAsync();
+        await RefreshChromeAsync();
+    }
+
+    /// <summary>
+    /// Reloads only the photographs on the sheet.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what a keystroke costs. The full refresh had grown to nine round trips — the
+    /// rail, the facets, the albums, the status counters, the face count, the label vocabulary
+    /// and two coverage figures — and every one of them ran again on every debounced character
+    /// typed into the search box, to redraw things that had not changed.
+    /// </para>
+    /// <para>
+    /// None of that depends on the query text. Searching changes which photographs are shown and
+    /// nothing else, so searching reloads the photographs and nothing else.
+    /// </para>
+    /// </remarks>
+    private async Task RefreshPhotosAsync()
+    {
+        PhotoQuery query = CurrentQuery();
+
+        // With text, go through the search engine so words and meaning are blended and the
+        // result is ranked by relevance. Without text this is browsing, where the chosen sort
+        // order is the whole answer and a relevance score would be noise.
+        if (query.Text is null)
+        {
+            _photos = await Library.QueryAsync(query);
+            _searchNote = null;
+        }
+        else
+        {
+            SearchResult result = await Library.SearchAsync(query);
+            _photos = result.Hits.Select(h => h.Photo).ToList();
+            _searchNote = Describe(result);
+        }
+
+        // A photo can leave the current view — moved to another album, filtered out — while it
+        // is still selected. Dropping those keeps the count honest and stops an action from
+        // silently operating on something no longer on screen.
+        var visible = _photos.Select(p => p.Id).ToHashSet();
+        _selected.RemoveWhere(id => !visible.Contains(id));
+
+        // A filter change can shrink the set out from under the focused cell or an open viewer.
+        _focus = _photos.Count == 0 ? 0 : Math.Clamp(_focus, 0, _photos.Count - 1);
+        if (_openIndex is { } open && open >= _photos.Count)
+        {
+            _openIndex = _photos.Count == 0 ? null : _photos.Count - 1;
+        }
+
+        StateHasChanged();
+    }
+
+    /// <summary>Reloads the rail, the panels and the counters.</summary>
+    /// <remarks>
+    /// Everything here describes the library rather than the query, so it only changes when the
+    /// library does. Kept as one method rather than eight so that "the library changed" has a
+    /// single obvious thing to call.
+    /// </remarks>
+    private async Task RefreshChromeAsync()
+    {
+        _rail = await Library.GetRailAsync();
+        _facets = await Library.GetFacetsAsync();
+        _albums = await Library.GetAlbumsAsync();
+        _status = await Library.GetStatusAsync();
+        (_faceCount, _) = await Library.CountFacesAsync();
+        _vocabulary = await Library.LabelVocabularyAsync();
+
+        (_described, int describable) = await Library.MeaningCoverageAsync();
+        _undescribed = Math.Max(0, describable - _described);
+
+        (_read, int readable) = await Library.DescriptionCoverageAsync();
+        _unread = Math.Max(0, readable - _read);
+
+        StateHasChanged();
+    }
+
+    private async Task Apply(Action change)
+    {
+        change();
+        await RefreshAsync();
+    }
+
+    private Task OnPeriodChanged(TimeRail.Period? period) => Apply(() => _period = period);
+
+    private Task OnOrderChanged(ChangeEventArgs args) => Apply(() =>
+    {
+        if (int.TryParse(args.Value?.ToString(), out int raw) && Enum.IsDefined(typeof(PhotoOrder), raw))
+        {
+            _order = (PhotoOrder)raw;
+        }
+    });
+
+    private Task ClearAllFilters() => Apply(() =>
+    {
+        _period = null;
+        _camera = null;
+        _folder = null;
+        _tag = null;
+        _object = null;
+        _city = null;
+        _country = null;
+        _minRating = 0;
+        _favourites = false;
+    });
+
+    private async Task OnSearchInput(ChangeEventArgs args)
+    {
+        _search = args.Value?.ToString() ?? string.Empty;
+
+        _searchDebounce?.Cancel();
+        _searchDebounce?.Dispose();
+        _searchDebounce = new CancellationTokenSource();
+        CancellationToken token = _searchDebounce.Token;
+
+        try
+        {
+            await Task.Delay(140, token);
+            if (!token.IsCancellationRequested)
+            {
+                // Only the photographs: the rail, the panels and the counters describe the
+                // library, not the query, and reloading them on every character typed was eight
+                // wasted round trips per keystroke.
+                await RefreshPhotosAsync();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a later keystroke.
+        }
+    }
+
+    private void Zoom(int delta) => _cell = Math.Clamp(_cell + delta, MinCell, MaxCell);
+
+    private async void Open(int index)
+    {
+        if (index < 0 || index >= _photos.Count)
+        {
+            return;
+        }
+
+        _openIndex = index;
+        _focus = index;
+        _openTags = await Library.GetTagsAsync(_photos[index].Id);
+        _openSegments = await Library.GetSegmentsAsync(_photos[index].Id);
+        _openPersonNames = PersonSegments.Reconcile(
+            _openSegments, await Library.GetFacesAsync(_photos[index].Id));
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Describes the undescribed part of the library so it can be searched by meaning.
+    /// </summary>
+    /// <remarks>
+    /// Foreground and interruptible-by-closing rather than a background service, because it is a
+    /// one-off: a library is described once, then only new photographs cost anything. The
+    /// progress line is the whole feedback — the grid is not refreshed until the end, since
+    /// rebuilding it per photograph would spend more time laying out than describing.
+    /// </remarks>
+    private async Task DescribeLibrary()
+    {
+        if (_describing)
+        {
+            return;
+        }
+
+        _describing = true;
+        var lastPaint = 0L;
+
+        var progress = new Progress<EmbeddingProgress>(p =>
+        {
+            long now = Environment.TickCount64;
+            if (now - lastPaint < 200 && p.Done < p.Total)
+            {
+                return;
+            }
+
+            lastPaint = now;
+            _describeLine = $"{p.Done}/{p.Total}";
+            StateHasChanged();
+        });
+
+        try
+        {
+            await Library.IndexLibraryForMeaningAsync(progress);
+        }
+        finally
+        {
+            _describing = false;
+            _describeLine = null;
+            await RefreshAsync();
+        }
+    }
+
+    /// <summary>
+    /// Has the vision model write a description of every photograph that has none.
+    /// </summary>
+    /// <remarks>
+    /// The slowest thing in the application — about thirteen seconds a photograph — so the
+    /// progress line carries the description just written rather than only a counter. Watching
+    /// the first two is how somebody decides whether to leave it running.
+    /// </remarks>
+    private async Task ReadLibrary()
+    {
+        if (_reading)
+        {
+            return;
+        }
+
+        _reading = true;
+        var lastPaint = 0L;
+
+        var progress = new Progress<DescriptionProgress>(p =>
+        {
+            long now = Environment.TickCount64;
+            if (now - lastPaint < 250 && p.Done < p.Total)
+            {
+                return;
+            }
+
+            lastPaint = now;
+            _readLine = $"{p.Done}/{p.Total} · {Truncate(p.Latest ?? p.Current ?? string.Empty, 60)}";
+            StateHasChanged();
+        });
+
+        try
+        {
+            int done = await Library.DescribeLibraryAsync(progress);
+            _flash = T.Format("describe.done", done);
+        }
+        finally
+        {
+            _reading = false;
+            _readLine = null;
+            await RefreshAsync();
+        }
+    }
+
+    private static string Truncate(string value, int width)
+        => value.Length <= width ? value : value[..Math.Max(0, width - 1)] + "\u2026";
+
+    // ------------------------------------------------------------------------- labelling
+
+    /// <summary>
+    /// Applies a correction to a region, then reloads what the viewer is showing.
+    /// </summary>
+    /// <remarks>
+    /// The whole library is refreshed, not just the open photograph, because a correction moves
+    /// the photo between object facets: relabelling a truck as a car changes both counts in the
+    /// sidebar, and leaving them stale would have the panel disagree with the picture on screen.
+    /// </remarks>
+    private async Task LabelSegment((long SegmentId, string? Label) change)
+    {
+        if (_openIndex is not { } open || open >= _photos.Count)
+        {
+            return;
+        }
+
+        await Library.SetSegmentLabelAsync(change.SegmentId, change.Label);
+
+        _flash = change.Label is null
+            ? T["label.reverted"]
+            : T.Format("label.saved", change.Label);
+
+        _openSegments = await Library.GetSegmentsAsync(_photos[open].Id);
+        _openPersonNames = PersonSegments.Reconcile(
+            _openSegments, await Library.GetFacesAsync(_photos[open].Id));
+        await RefreshAsync();
+    }
+
+    private async Task AddTag(string tag)
+    {
+        if (_openIndex is not { } open || open >= _photos.Count)
+        {
+            return;
+        }
+
+        if (await Library.AddUserTagAsync(_photos[open].Id, tag))
+        {
+            _flash = T.Format("label.tagged", tag);
+            _openTags = await Library.GetTagsAsync(_photos[open].Id);
+            await RefreshAsync();
+        }
+    }
+
+    private async Task RemoveTag(string tag)
+    {
+        if (_openIndex is not { } open || open >= _photos.Count)
+        {
+            return;
+        }
+
+        if (await Library.RemoveUserTagAsync(_photos[open].Id, tag))
+        {
+            _flash = T.Format("label.untagged", tag);
+            _openTags = await Library.GetTagsAsync(_photos[open].Id);
+            await RefreshAsync();
+        }
+    }
+
+    /// <summary>
+    /// Filters the whole library to a detected object, and closes the viewer to show the result.
+    /// </summary>
+    /// <remarks>
+    /// Closing is the point. Clicking "dog" on a photograph means "show me the others", and
+    /// leaving the viewer open on top of the answer would hide it.
+    /// </remarks>
+    private async Task PickObject(string label)
+    {
+        _openIndex = null;
+        await Apply(() => _object = label);
+    }
+
+    private async void Close()
+    {
+        _openIndex = null;
+        StateHasChanged();
+
+        // Return focus to the grid cell that was open. Focus that evaporates when a dialog
+        // closes is the most common way a keyboard user gets stranded in an application.
+        await JS.InvokeVoidAsync("pixelflux.revealCell", _gridElement, _focus);
+    }
+
+    private void Step(int delta)
+    {
+        if (_openIndex is { } current)
+        {
+            Open(Math.Clamp(current + delta, 0, _photos.Count - 1));
+        }
+    }
+
+    // ImportAlbum and FindAlbum used to live here. They walked up from the executable looking
+    // for the repository's own testdata/album folder and imported that — a development shortcut
+    // that worked on exactly one machine and gave everybody else a button that reported "no album
+    // found". Choosing folders is now a real feature; see SourcePanel and SourceService.
+}

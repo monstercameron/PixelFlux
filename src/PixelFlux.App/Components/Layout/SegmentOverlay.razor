@@ -1,0 +1,187 @@
+@using System.Globalization
+@using PixelFlux.App.Services
+@using PixelFlux.Core.Model
+@inject Strings T
+
+@*
+    THE SEGMENTATION OVERLAY
+
+    Tinted masks laid over the photograph, one per thing the model found, each with a label chip.
+
+    HOW THE MASKS ARE DRAWN
+    -----------------------
+    Each mask is a greyscale PNG on disk covering that segment's bounding box. It is applied as
+    a CSS `mask-image` to a flat coloured div positioned over the box, so the browser tints
+    exactly the mask pixels and nothing else. That means no canvas, no per-frame JavaScript, and
+    the browser's own image cache and decoder do the work — an overlay of twenty segments costs
+    twenty ordinary image loads.
+
+    COLOUR
+    ------
+    The one place the design system's two-accent rule is deliberately broken. Here colour is not
+    decoration: it is the only thing separating two masks that touch, and the only thing tying a
+    chip to the region it names. The hue comes from a hash of the label, so every dog in the
+    library is the same colour in every photograph.
+
+    Hovering a chip isolates its mask. With eight overlapping segments a static overlay is
+    unreadable, and isolation is what turns it back into something you can actually inspect.
+*@
+
+<div class="segs">
+    @foreach (PhotoSegmentRecord segment in Segments)
+    {
+        PhotoSegmentRecord s = segment;
+        string? url = LibraryService.DerivativeUrl(s.MaskKey);
+
+        @if (url is not null)
+        {
+            @* The mask is its own hover target, not just the chip. Pointer events use the
+               element box rather than the mask shape — CSS masking affects painting only — but
+               segments are painted most-prominent-first, so the smaller and more specific ones
+               sit on top and catch the pointer first. That makes box-based hit testing behave
+               close enough to shape-based in practice. *@
+            <div class="seg @(_hovered == s.Id ? "lit" : null)"
+                 style="@Box(s); --hue:@s.Hue"
+                 @onmouseenter="() => _hovered = s.Id"
+                 @onmouseleave="() => _hovered = null"
+                 aria-hidden="true">
+                @* A plain image, not a CSS mask. The colour is already in the file. *@
+                <img src="@url" alt="" draggable="false" />
+            </div>
+        }
+    }
+
+    @foreach ((PhotoSegmentRecord s, double top, double left) in LabelledSegments())
+    {
+        PhotoSegmentRecord seg = s;
+
+        <button type="button"
+                class="seg-chip @(_hovered == seg.Id ? "lit" : null)"
+                style="left:@Percent(left);top:@Percent(top);--hue:@seg.Hue"
+                title="@T.Format("seg.findAll", seg.DisplayLabel) — @Coverage(seg)"
+                @onmouseenter="() => _hovered = seg.Id"
+                @onmouseleave="() => _hovered = null"
+                @onfocus="() => _hovered = seg.Id"
+                @onblur="() => _hovered = null"
+                @onclick="() => OnPick.InvokeAsync(seg.DisplayLabel)">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="lbl">@Shown(seg)</span>
+        </button>
+    }
+</div>
+
+@code {
+    /// <summary>Segments to draw, most prominent first.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<PhotoSegmentRecord> Segments { get; set; } = [];
+
+    /// <summary>
+    /// Names for the person outlines a named face was matched to, by segment id.
+    /// </summary>
+    /// <remarks>
+    /// Passed as a separate map rather than folded into the segment's label on the way in. A
+    /// derived name and a name somebody typed look identical once they are both strings, and the
+    /// overlay styles corrected labels differently on purpose — merging them would make the
+    /// segmenter appear to have been corrected by a human who never touched it.
+    /// </remarks>
+    [Parameter]
+    public IReadOnlyDictionary<long, string> PersonNames { get; set; } =
+        new Dictionary<long, string>();
+
+    /// <summary>Raised when a label is clicked, to filter the library to that object.</summary>
+    [Parameter]
+    public EventCallback<string> OnPick { get; set; }
+
+    private long? _hovered;
+
+    /// <summary>Positions a mask over its bounding box, in percentages of the photograph.</summary>
+    /// <remarks>
+    /// Percentages rather than pixels, because the overlay's parent is sized to the rendered
+    /// image and that size changes with the window. Storing fractional geometry in the database
+    /// is what makes this a formatting concern rather than a recalculation.
+    /// </remarks>
+    private static string Box(PhotoSegmentRecord s) => string.Create(
+        CultureInfo.InvariantCulture,
+        $"left:{s.X * 100:0.###}%;top:{s.Y * 100:0.###}%;"
+        + $"width:{s.Width * 100:0.###}%;height:{s.Height * 100:0.###}%");
+
+    /// <summary>What to write on a segment's chip.</summary>
+    /// <remarks>
+    /// A matched name beats the model's word for it. The click still filters by the model's label,
+    /// which is why the chip's tooltip keeps saying what that is: the outline is a person, and
+    /// knowing who they are does not yet change what searching for them does.
+    /// </remarks>
+    private string Shown(PhotoSegmentRecord segment) =>
+        PersonNames.TryGetValue(segment.Id, out string? name) ? name : segment.DisplayLabel;
+
+    /// <summary>Least share of the frame a segment must cover to earn a label.</summary>
+    /// <remarks>
+    /// Everything gets a mask; only the significant things get a chip. A photograph of a car
+    /// show produced twenty labels, every one of them clamped to the top edge and stacked into
+    /// an unreadable pile of overlapping pills. Nineteen of them were people the size of a
+    /// thumbnail in the background — masks worth having, labels worth nothing.
+    /// </remarks>
+    private const double MinimumLabelArea = 0.012;
+
+    /// <summary>Most chips to draw, however many segments there are.</summary>
+    private const int MaxLabels = 7;
+
+    /// <summary>
+    /// Chooses which segments get a label and where to put it, avoiding overlaps.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Chips sit at the centre of their segment's box rather than its top-left corner.
+    /// Corners bunch: most objects in a photograph start near the top, so every label landed in
+    /// the same strip. Centres are spread out because the objects are.
+    /// </para>
+    /// <para>
+    /// A greedy pass then pushes any chip that would collide with an already-placed one further
+    /// down, and drops it entirely if there is nowhere left. Placement is in prominence order,
+    /// so when something has to give way it is always the less important label.
+    /// </para>
+    /// </remarks>
+    private IEnumerable<(PhotoSegmentRecord Segment, double Top, double Left)> LabelledSegments()
+    {
+        var placed = new List<(double Top, double Left)>();
+
+        foreach (PhotoSegmentRecord s in Segments
+                     .Where(s => s.AreaFraction >= MinimumLabelArea)
+                     .Take(MaxLabels))
+        {
+            double left = Math.Clamp(((s.X + (s.Width / 2)) * 100) - 6, 1, 72);
+            double top = Math.Clamp((s.Y + (s.Height / 2)) * 100, 4, 92);
+
+            // Keep clear of the controls in the top-right corner.
+            if (top < 9 && left > 55)
+            {
+                left = 55;
+            }
+
+            bool dropped = false;
+            while (placed.Any(p => Math.Abs(p.Top - top) < 4.5 && Math.Abs(p.Left - left) < 22))
+            {
+                top += 5;
+                if (top > 92)
+                {
+                    dropped = true;
+                    break;
+                }
+            }
+
+            if (dropped)
+            {
+                continue;
+            }
+
+            placed.Add((top, left));
+            yield return (s, top, left);
+        }
+    }
+
+    private static string Percent(double value)
+        => value.ToString("0.###", CultureInfo.InvariantCulture) + "%";
+
+    private string Coverage(PhotoSegmentRecord s)
+        => T.Format("seg.coverage", Math.Round(s.AreaFraction * 100).ToString("0", CultureInfo.CurrentCulture));
+}

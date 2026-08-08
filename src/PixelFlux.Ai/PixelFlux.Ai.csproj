@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PixelFlux.Ai — local ONNX Runtime inference: open-vocabulary detection, captioning,
+    and image/text embeddings.
+
+    Isolated from Core so that (a) the model stack can be swapped without touching the index,
+    and (b) a build with no models present still runs. Every analyser here degrades to a
+    no-result rather than throwing when its model file is absent; see ModelCatalog.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>PixelFlux.Ai</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.Tokenizers" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntimeGenAI.Managed" />
+    <PackageReference Include="SixLabors.ImageSharp" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <!--
+    Exactly one ONNX Runtime package. Referencing two drops two onnxruntime.dll copies into the
+    output directory and the loader picks arbitrarily.
+
+    This was the DirectML build on Windows, on the theory that a GPU or NPU provider would be
+    wanted later. It never was: no code in this repository has ever appended the DirectML
+    execution provider, so every model has always run on the CPU. The cost of keeping the option
+    open turned out to be real — the DirectML package stops at ONNX Runtime 1.24.4 while the base
+    package is four releases further on, and the vision-language runtime needs 1.28.
+
+    Paying four versions and a whole feature for an execution provider nothing calls is the wrong
+    trade. If the GPU is ever wanted, this comes back as a deliberate piece of work with a
+    measurement attached, rather than as a dependency held in reserve.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PixelFlux.Core\PixelFlux.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="PixelFlux.Tests" />
+  </ItemGroup>
+
+</Project>

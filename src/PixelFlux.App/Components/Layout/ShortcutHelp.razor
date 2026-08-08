@@ -1,0 +1,91 @@
+@inject Strings T
+
+@*
+    The keyboard shortcut list, opened with "?".
+
+    Worth its own surface rather than a line in settings: shortcuts that are not discoverable
+    might as well not exist, and the one place people look for them is the key they already
+    guessed. Grouped by intent — navigate, find, view — because a flat alphabetical list of
+    twelve bindings is a reference table, not something you can learn from.
+*@
+
+<div class="modal-scrim" @onclick="() => OnClose.InvokeAsync()">
+    <div class="modal keys"
+         role="dialog"
+         aria-modal="true"
+         aria-label="@T["keys.title"]"
+         tabindex="0"
+         @ref="_root"
+         @onkeydown="OnKey"
+         @onclick:stopPropagation="true">
+
+        <div class="modal-head">
+            <h2>@T["keys.title"]</h2>
+            <button class="tool" aria-label="@T["keys.close"]" @onclick="() => OnClose.InvokeAsync()">✕</button>
+        </div>
+
+        <div class="keys-body">
+            <section>
+                <h3 class="label">@T["keys.group.navigate"]</h3>
+                <dl>
+                    <dt><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></dt>
+                    <dd>@T["keys.move"]</dd>
+                    <dt><kbd>Enter</kbd></dt>
+                    <dd>@T["keys.open"]</dd>
+                    <dt><kbd>Home</kbd><kbd>End</kbd></dt>
+                    <dd>@T["keys.firstLast"]</dd>
+                    <dt><kbd>PgUp</kbd><kbd>PgDn</kbd></dt>
+                    <dd>@T["keys.page"]</dd>
+                </dl>
+            </section>
+
+            <section>
+                <h3 class="label">@T["keys.group.filter"]</h3>
+                <dl>
+                    <dt><kbd>/</kbd></dt>
+                    <dd>@T["keys.search"]</dd>
+                    <dt><kbd>F</kbd></dt>
+                    <dd>@T["keys.toggleFilters"]</dd>
+                    <dt><kbd>Esc</kbd></dt>
+                    <dd>@T["keys.clear"]</dd>
+                </dl>
+            </section>
+
+            <section>
+                <h3 class="label">@T["keys.group.view"]</h3>
+                <dl>
+                    <dt><kbd>+</kbd><kbd>−</kbd></dt>
+                    <dd>@T["keys.zoom"]</dd>
+                    <dt><kbd>?</kbd></dt>
+                    <dd>@T["keys.help"]</dd>
+                </dl>
+            </section>
+        </div>
+    </div>
+</div>
+
+@code {
+    /// <summary>Raised when the overlay should close.</summary>
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    private ElementReference _root;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Focus the dialog so Escape works immediately — a shortcuts overlay you cannot
+            // dismiss from the keyboard would be a poor joke.
+            await _root.FocusAsync();
+        }
+    }
+
+    private async Task OnKey(KeyboardEventArgs args)
+    {
+        if (args.Key is "Escape" or "?" or "Enter")
+        {
+            await OnClose.InvokeAsync();
+        }
+    }
+}

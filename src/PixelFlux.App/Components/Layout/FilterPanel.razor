@@ -1,0 +1,233 @@
+@using System.Globalization
+@inject Strings T
+
+@*
+    THE FILTER PANEL
+
+    Search assumes you know what to type. Browsing a photo library usually starts the other way
+    round: you know roughly when, or which camera, or that it was somewhere in Hong Kong, and
+    you want the set narrowed until the answer is visible. That is what facets are for, and
+    every one here maps directly onto a field of PhotoQuery — so clicking a facet and typing the
+    equivalent filter produce exactly the same query.
+
+    Counts are shown on every value because a facet without a count makes you click to find out
+    whether it was worth clicking. They are affordable now only because the sections they live in
+    start closed — see FilterSection for why eighty of them at once was a problem.
+*@
+
+<aside class="filters" aria-label="@T["filter.title"]">
+
+    <div class="filters-head">
+        <span class="label">@T["filter.title"]</span>
+        @if (HasAny)
+        {
+            <button type="button" class="linkish" @onclick="ClearAll">@T["filter.clearAll"]</button>
+        }
+    </div>
+
+    <div class="filters-scroll">
+
+        <FilterSection Title="@T["filter.rating"]" Active="@(MinRating > 0 || FavouritesOnly)">
+            <div class="stars">
+                @for (int stars = 1; stars <= 5; stars++)
+                {
+                    int value = stars;
+                    <button type="button"
+                            class="star @(MinRating >= value ? "on" : null)"
+                            title="@T.Format("filter.starsAndUp", value)"
+                            aria-pressed="@(MinRating >= value ? "true" : "false")"
+                            @onclick="() => SetRating(value)">★</button>
+                }
+                @if (MinRating is > 0)
+                {
+                    <button type="button" class="linkish" @onclick="() => SetRating(0)">@T["filter.any"]</button>
+                }
+            </div>
+            <button type="button"
+                    class="facet @(FavouritesOnly ? "on" : null)"
+                    aria-pressed="@(FavouritesOnly ? "true" : "false")"
+                    @onclick="ToggleFavourites">
+                <span class="v">@T["filter.favourites"]</span>
+            </button>
+        </FilterSection>
+
+        @* Order is by how often people actually reach for each one. Where and what-camera are
+           the two facts a person reliably remembers about a photograph; tags come last because
+           until a model has run they are whatever keywords happened to be embedded in the file,
+           and that list is long and noisy. *@
+        @* First, because it answers the question people most often actually have: what is in
+           the picture. Everything else is circumstance. *@
+        @RenderFacet(1, T["filter.object"], "object", Object, v => OnObjectChanged.InvokeAsync(v))
+        @RenderFacet(2, T["filter.country"], "country", Country, v => OnCountryChanged.InvokeAsync(v))
+        @RenderFacet(3, T["filter.city"], "city", City, v => OnCityChanged.InvokeAsync(v))
+        @RenderFacet(4, T["filter.camera"], "camera", CameraModel, v => OnCameraChanged.InvokeAsync(v))
+        @RenderFacet(5, T["filter.folder"], "folder", SourceFolder, v => OnFolderChanged.InvokeAsync(v), shorten: true)
+        @RenderFacet(6, T["filter.tag"], "tag", Tag, v => OnTagChanged.InvokeAsync(v))
+
+    </div>
+</aside>
+
+@code {
+    /// <summary>Facet values and counts, keyed by facet name.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyDictionary<string, IReadOnlyList<(string Value, int Count)>> Facets { get; set; } =
+        new Dictionary<string, IReadOnlyList<(string, int)>>();
+
+    /// <summary>Currently selected camera model, if any.</summary>
+    [Parameter] public string? CameraModel { get; set; }
+
+    /// <summary>Currently selected source folder, if any.</summary>
+    [Parameter] public string? SourceFolder { get; set; }
+
+    /// <summary>Currently selected tag, if any.</summary>
+    [Parameter] public string? Tag { get; set; }
+
+    /// <summary>Currently selected detected object, if any.</summary>
+    [Parameter] public string? Object { get; set; }
+
+    /// <summary>Currently selected city, if any.</summary>
+    [Parameter] public string? City { get; set; }
+
+    /// <summary>Currently selected country, if any.</summary>
+    [Parameter] public string? Country { get; set; }
+
+    /// <summary>Minimum star rating, 0 for any.</summary>
+    [Parameter] public int MinRating { get; set; }
+
+    /// <summary>Whether the favourites-only filter is on.</summary>
+    [Parameter] public bool FavouritesOnly { get; set; }
+
+    /// <summary>Raised when the camera filter changes. Null clears it.</summary>
+    [Parameter] public EventCallback<string?> OnCameraChanged { get; set; }
+
+    /// <summary>Raised when the folder filter changes. Null clears it.</summary>
+    [Parameter] public EventCallback<string?> OnFolderChanged { get; set; }
+
+    /// <summary>Raised when the tag filter changes. Null clears it.</summary>
+    [Parameter] public EventCallback<string?> OnTagChanged { get; set; }
+
+    /// <summary>Raised when the detected-object filter changes. Null clears it.</summary>
+    [Parameter] public EventCallback<string?> OnObjectChanged { get; set; }
+
+    /// <summary>Raised when the city filter changes. Null clears it.</summary>
+    [Parameter] public EventCallback<string?> OnCityChanged { get; set; }
+
+    /// <summary>Raised when the country filter changes. Null clears it.</summary>
+    [Parameter] public EventCallback<string?> OnCountryChanged { get; set; }
+
+    /// <summary>Raised when the minimum rating changes.</summary>
+    [Parameter] public EventCallback<int> OnRatingChanged { get; set; }
+
+    /// <summary>Raised when the favourites toggle changes.</summary>
+    [Parameter] public EventCallback<bool> OnFavouritesChanged { get; set; }
+
+    /// <summary>Raised when every filter should be cleared at once.</summary>
+    [Parameter] public EventCallback OnClearAll { get; set; }
+
+    private bool HasAny =>
+        CameraModel is not null || SourceFolder is not null || Tag is not null || Object is not null ||
+        City is not null || Country is not null || MinRating > 0 || FavouritesOnly;
+
+    private Task ClearAll() => OnClearAll.InvokeAsync();
+
+    private Task SetRating(int value)
+        // Clicking the star that is already the minimum clears the filter, so the control can
+        // undo itself rather than needing a separate "any" every time.
+        => OnRatingChanged.InvokeAsync(MinRating == value ? 0 : value);
+
+    private Task ToggleFavourites() => OnFavouritesChanged.InvokeAsync(!FavouritesOnly);
+
+    /// <summary>Renders one collapsible facet section.</summary>
+    /// <param name="slot">
+    /// Which of the fixed list of facets this is, 1-based. It exists to keep render-tree
+    /// sequence numbers unique.
+    /// </param>
+    /// <param name="title">Section heading.</param>
+    /// <param name="key">Facet key in the <see cref="Facets"/> dictionary.</param>
+    /// <param name="selected">The value currently applied, if any.</param>
+    /// <param name="onPick">Raised with the chosen value, or null to clear.</param>
+    /// <param name="shorten">Whether to abbreviate long values, as file paths need.</param>
+    /// <remarks>
+    /// <para>
+    /// <b>Why the slot exists.</b> Every one of these fragments writes into the panel's own
+    /// render-tree builder, and Blazor's diff assumes sequence numbers are unique and increasing
+    /// among siblings — that is how it decides frame 3 of this render describes the same thing as
+    /// frame 3 of the last one. All six facets used to start counting from zero, so six sibling
+    /// components each claimed sequences 0 to 4. Nothing visibly broke, which is the dangerous
+    /// kind of wrong: the diff was free to reuse the wrong instance the moment the set of facets
+    /// changed. Basing each on its slot keeps the ranges apart, and the step is far larger than
+    /// the number of frames any one facet emits, so adding an attribute later cannot collide.
+    /// </para>
+    /// </remarks>
+    private RenderFragment RenderFacet(
+        int slot,
+        string title,
+        string key,
+        string? selected,
+        Func<string?, Task> onPick,
+        bool shorten = false) => builder =>
+    {
+        IReadOnlyList<(string Value, int Count)> values =
+            Facets.TryGetValue(key, out IReadOnlyList<(string, int)>? found) ? found : [];
+
+        if (values.Count == 0)
+        {
+            return;
+        }
+
+        int sequence = slot * 1000;
+        builder.OpenComponent<FilterSection>(sequence++);
+        builder.AddAttribute(sequence++, "Title", title);
+        builder.AddAttribute(sequence++, "Count", values.Count);
+
+        // A section whose value is currently applied opens itself, so the reason the library is
+        // narrowed is never folded out of sight.
+        builder.AddAttribute(sequence++, "Active", selected is not null);
+        builder.AddAttribute(sequence++, "ChildContent", (RenderFragment)(inner =>
+        {
+            // Same rule inside the section: each row needs its own range, or fourteen sibling
+            // buttons all claim the same handful of sequence numbers.
+            int row = 0;
+            foreach ((string value, int count) in values.Take(14))
+            {
+                int s = row++ * 100;
+                bool isOn = string.Equals(selected, value, StringComparison.Ordinal);
+                string label = shorten ? ShortPath(value) : value;
+
+                inner.OpenElement(s++, "button");
+                inner.AddAttribute(s++, "type", "button");
+                inner.AddAttribute(s++, "class", isOn ? "facet on" : "facet");
+                inner.AddAttribute(s++, "title", $"{value} — {count}");
+                inner.AddAttribute(s++, "aria-pressed", isOn ? "true" : "false");
+                // Clicking the active value clears it — same undo-in-place rule as the stars.
+                inner.AddAttribute(s++, "onclick",
+                    Microsoft.AspNetCore.Components.EventCallback.Factory.Create(
+                        this, () => onPick(isOn ? null : value)));
+
+                // <bdi>, not <span>. Facet values are overwhelmingly LTR data — Windows paths,
+                // camera model strings, coordinates — sitting inside chrome that may be RTL.
+                // Without isolation the bidi algorithm reorders their slashes and digits, and
+                // "…/album/2026" renders as "album/2026/…".
+                inner.OpenElement(s++, "bdi");
+                inner.AddAttribute(s++, "class", "v");
+                inner.AddContent(s++, label);
+                inner.CloseElement();
+
+                inner.OpenElement(s++, "span");
+                inner.AddAttribute(s++, "class", "n");
+                inner.AddContent(s++, count);
+                inner.CloseElement();
+
+                inner.CloseElement();
+            }
+        }));
+        builder.CloseComponent();
+    };
+
+    /// <summary>Shows the last two path segments — enough to identify a folder, short enough to fit.</summary>
+    private static string ShortPath(string path)
+    {
+        string[] parts = path.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length <= 2 ? path : ".../" + string.Join('/', parts[^2..]);
+    }
+}

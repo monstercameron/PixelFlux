@@ -1,0 +1,79 @@
+<Project>
+
+  <!--
+    Central package management. Every PackageReference in the repo omits its Version and
+    picks it up from here, so a dependency is upgraded in exactly one place.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Local index / metadata store.
+         SQLitePCLRaw is pinned above what Microsoft.Data.Sqlite resolves transitively:
+         everything <= 2.1.11 bundles a SQLite build with advisory GHSA-2m69-gcr7-jv3q. -->
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.1" />
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.12" />
+    <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
+    <PackageVersion Include="SQLitePCLRaw.core" Version="2.1.12" />
+    <PackageVersion Include="SQLitePCLRaw.provider.e_sqlite3" Version="2.1.12" />
+
+    <!-- Image decode, resize, thumbnail/proxy generation, and non-destructive edit rendering.
+         Covers JPEG/PNG/WebP/TIFF/BMP/GIF. HEIC/HEIF is handled separately on Windows through
+         the platform imaging component (see PixelFlux.Core.Imaging). -->
+    <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
+
+    <!-- EXIF / XMP / IPTC extraction. Reads containers ImageSharp cannot decode (incl. HEIC),
+         which is why metadata reading and pixel decoding are separate concerns in this codebase. -->
+    <PackageVersion Include="MetadataExtractor" Version="2.8.1" />
+
+    <!-- Local AI inference.
+         Exactly ONE of these is referenced per platform — they ship the same managed surface
+         over different native binaries, and referencing both puts two onnxruntime.dll copies
+         in the output folder. Windows takes the DirectML build (GPU/NPU execution providers);
+         everything else takes the portable CPU build.
+         Version is held at 1.24.4 because that is the newest release the DirectML package has
+         shipped; bumping the base package alone would silently split the two builds apart. -->
+    <PackageVersion Include="Microsoft.ML.OnnxRuntime" Version="1.28.0" />
+
+    <!--
+      ONNX Runtime GenAI drives the vision-language model. It exists because a modern VLM is not
+      one graph you call: it is a vision encoder, an embedding table and a decoder, plus an
+      autoregressive loop, a key-value cache, a chat template, and image tokens interleaved into
+      the text stream at positions the processor decides. Hand-rolling that is days of work and a
+      rich source of failures that produce fluent nonsense rather than an error.
+
+      Its native binaries include win-arm64, which is the machine this runs on.
+    -->
+    <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI" Version="0.15.2" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntimeGenAI.Managed" Version="0.15.2" />
+    <!--
+      Kept pinned but no longer referenced. DirectML stops at 1.24.4 while the base runtime is at
+      1.28, and the vision-language runtime requires 1.28 — see PixelFlux.Ai.csproj for why the
+      GPU provider was dropped rather than the version held back.
+    -->
+
+    <!-- Text tokenization for the caption and text-embedding models. -->
+    <PackageVersion Include="Microsoft.ML.Tokenizers" Version="1.0.2" />
+
+    <!-- S3-compatible object storage (MinIO, Backblaze B2, Cloudflare R2, AWS S3, ...).
+         AWSSDK.Core is pinned directly: the version S3 resolves transitively carries
+         advisory GHSA-9cvc-h2w8-phrp, and NU1901 is an error under this repo's warning bar. -->
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.102" />
+    <PackageVersion Include="AWSSDK.Core" Version="4.0.100.9" />
+
+    <!-- Hosting primitives shared by the app and the headless worker. -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.1" />
+
+    <!-- Test stack. -->
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.1" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+  </ItemGroup>
+
+</Project>

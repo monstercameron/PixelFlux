@@ -1,0 +1,182 @@
+@using PixelFlux.Core.Index
+@inject Strings T
+
+@*
+    ALBUMS
+
+    An album is a view, not a folder. Adding a photograph to one does not move the file, and a
+    photograph can be in as many albums as you like — so the vocabulary here is "add" and
+    "remove", never "copy" and "delete". The only place "move" appears is between two albums,
+    which is the one case where something genuinely leaves somewhere.
+
+    Each row is a drop target. Dragging a selection onto an album is the gesture people reach
+    for first, and it does the right thing depending on where the drag started: from All photos
+    it adds, from inside another album it moves.
+*@
+
+<div class="albums">
+    <div class="albums-head">
+        <span class="label">@T["albums.title"]</span>
+        <button type="button" class="linkish" @onclick="StartCreating">@T["albums.new"]</button>
+    </div>
+
+    @if (_creating)
+    {
+        <div class="album-new">
+            <input @ref="_nameField"
+                   value="@_name"
+                   @oninput="e => _name = e.Value?.ToString() ?? string.Empty"
+                   @onkeydown="OnNameKey"
+                   placeholder="@T["albums.namePlaceholder"]"
+                   aria-label="@T["albums.namePlaceholder"]" />
+            <div class="album-new-actions">
+                <button type="button" class="btn btn-primary" @onclick="Create"
+                        disabled="@(_name.Trim().Length == 0)">@T["albums.create"]</button>
+                <button type="button" class="linkish" @onclick="CancelCreating">@T["albums.cancel"]</button>
+            </div>
+            @if (_error is { } error)
+            {
+                <p class="album-error">@error</p>
+            }
+        </div>
+    }
+
+    @* "All photos" is a row like any other so that leaving an album is the same gesture as
+       entering one, and so the current scope is always visible in the same place. *@
+    <button type="button"
+            class="album @(Selected is null ? "on" : null)"
+            @onclick="() => OnSelect.InvokeAsync(null)">
+        <span class="v">@T["albums.all"]</span>
+        <span class="n">@TotalPhotos</span>
+    </button>
+
+    @if (Albums.Count == 0 && !_creating)
+    {
+        <p class="albums-none">@T["albums.none"]</p>
+    }
+
+    @foreach (PhotoCollection album in Albums)
+    {
+        PhotoCollection a = album;
+
+        <div class="album-row @(_dropTarget == a.Id ? "dropping" : null)"
+             @ondragover:preventDefault="true"
+             @ondragenter="() => _dropTarget = a.Id"
+             @ondragleave="() => _dropTarget = null"
+             @ondrop="() => Drop(a)">
+
+            <button type="button"
+                    class="album @(Selected == a.Id ? "on" : null)"
+                    @onclick="() => OnSelect.InvokeAsync(a.Id)">
+                <bdi class="v">@a.Name</bdi>
+                <span class="n">@(a.Count < 0 ? "~" : a.Count.ToString(System.Globalization.CultureInfo.CurrentCulture))</span>
+            </button>
+
+            <button type="button" class="album-x" title="@T["albums.delete"]"
+                    aria-label="@T["albums.delete"]"
+                    @onclick="() => OnDelete.InvokeAsync(a.Id)">✕</button>
+
+            @if (_dropTarget == a.Id)
+            {
+                <span class="album-drop">@T["albums.dropHere"]</span>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>Albums to list.</summary>
+    [Parameter, EditorRequired]
+    public IReadOnlyList<PhotoCollection> Albums { get; set; } = [];
+
+    /// <summary>The album currently being viewed, or null for the whole library.</summary>
+    [Parameter]
+    public long? Selected { get; set; }
+
+    /// <summary>Total photos in the library, shown against "All photos".</summary>
+    [Parameter]
+    public int TotalPhotos { get; set; }
+
+    /// <summary>Raised when a different album (or the whole library) is chosen.</summary>
+    [Parameter]
+    public EventCallback<long?> OnSelect { get; set; }
+
+    /// <summary>Raised to create an album with the given name.</summary>
+    /// <remarks>Returns the failure message to display, or null on success.</remarks>
+    [Parameter]
+    public Func<string, Task<string?>>? OnCreate { get; set; }
+
+    /// <summary>Raised to delete an album.</summary>
+    [Parameter]
+    public EventCallback<long> OnDelete { get; set; }
+
+    /// <summary>Raised when a selection is dropped onto an album.</summary>
+    [Parameter]
+    public EventCallback<long> OnDropOnAlbum { get; set; }
+
+    private bool _creating;
+    private string _name = string.Empty;
+    private string? _error;
+    private long? _dropTarget;
+    private ElementReference _nameField;
+    private bool _focusPending;
+
+    private void StartCreating()
+    {
+        _creating = true;
+        _name = string.Empty;
+        _error = null;
+        _focusPending = true;
+    }
+
+    private void CancelCreating()
+    {
+        _creating = false;
+        _error = null;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusPending)
+        {
+            // Opening a name field and not focusing it makes the user click the thing they just
+            // asked for.
+            _focusPending = false;
+            await _nameField.FocusAsync();
+        }
+    }
+
+    private async Task OnNameKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await Create();
+        }
+        else if (args.Key == "Escape")
+        {
+            CancelCreating();
+        }
+    }
+
+    private async Task Create()
+    {
+        if (OnCreate is null || _name.Trim().Length == 0)
+        {
+            return;
+        }
+
+        _error = await OnCreate(_name.Trim());
+
+        if (_error is null)
+        {
+            _creating = false;
+            _name = string.Empty;
+        }
+    }
+
+    private async Task Drop(PhotoCollection album)
+    {
+        _dropTarget = null;
+        await OnDropOnAlbum.InvokeAsync(album.Id);
+    }
+}

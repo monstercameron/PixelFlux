@@ -1,0 +1,164 @@
+@using PixelFlux.App.Services
+@using PixelFlux.Core.Setup
+@inject Strings T
+@inject ModelService Models
+@implements IDisposable
+
+@*
+    Onboarding: the four models that make PixelFlux more than a folder viewer, and a button each.
+
+    It exists because the alternative is a paragraph in a README asking somebody to visit two
+    hosting sites, pick the right files out of five projects, and put them in a folder — which is
+    where most people would stop, and stopping there means the entire point of the application
+    never switches on.
+
+    Every model is optional and says what it costs and what it buys, because two of them are large
+    enough that somebody on a metered connection should be able to decline one and still have a
+    library worth using. Nothing is downloaded until a button is pressed.
+*@
+
+<div class="modal-scrim" @onclick="Close">
+    <div class="modal setup"
+         role="dialog"
+         aria-modal="true"
+         aria-label="@T["setup.title"]"
+         tabindex="0"
+         @ref="_root"
+         @onkeydown="OnKey"
+         @onclick:stopPropagation="true">
+
+        <div class="modal-head">
+            <h2>@T["setup.title"]</h2>
+            @if (!Models.Busy)
+            {
+                <button class="tool" aria-label="@T["keys.close"]" @onclick="Close">✕</button>
+            }
+        </div>
+
+        <div class="setup-body">
+
+            @* Said once, at the top, because it is the thing somebody is entitled to be told before
+               an application they installed for its privacy starts making requests. *@
+            <p class="preamble">@T["setup.preamble"]</p>
+
+            @foreach (CatalogueModel model in ModelCatalog.All)
+            {
+                bool installed = Models.IsInstalled(model);
+                bool active = Models.Current == model.Id;
+
+                <section class="offer @(installed ? "have" : null)">
+                    <div class="offer-what">
+                        <span class="t">@model.Enables</span>
+                        <span class="meta mono">
+                            @model.Name<span class="sep">·</span>@Size(model.Bytes)<span class="sep">·</span>@model.Licence
+                        </span>
+                    </div>
+
+                    @if (installed)
+                    {
+                        <span class="done">@T["setup.installed"]</span>
+                    }
+                    else if (active)
+                    {
+                        <div class="offer-progress">
+                            <span class="bar" aria-hidden="true">
+                                <span class="fill" style="width: @($"{Models.Fraction * 100:F0}%")"></span>
+                            </span>
+                            <span class="meta mono">@Models.CurrentFile</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <button type="button" class="btn"
+                                disabled="@Models.Busy"
+                                @onclick="() => Install(model)">@T["setup.get"]</button>
+                    }
+                </section>
+
+                @* The licence warning sits with the model it applies to, not in a wall of terms at
+                   the bottom that nobody reads. Only the copyleft one gets it: repeating a notice
+                   for the permissive three would train people to skip all four. *@
+                @if (model.Terms == ModelTerms.Copyleft && !installed)
+                {
+                    <p class="terms">
+                        @T["setup.copyleft"]
+                        <a href="@model.Source" target="_blank" rel="noopener noreferrer">@T["setup.readTerms"]</a>
+                    </p>
+                }
+            }
+
+            @if (Models.Error is { } error)
+            {
+                <p class="failed" role="alert">@error</p>
+            }
+
+            <div class="actions">
+                @if (Models.Busy)
+                {
+                    <button type="button" class="btn" @onclick="Models.Cancel">@T["setup.stop"]</button>
+                }
+                else
+                {
+                    @* "Download everything (0 MB)" is not a sentence. With nothing left to fetch
+                       the dialog has one job, which is to get out of the way. *@
+                    @if (Models.AllInstalled)
+                    {
+                        <button type="button" class="btn btn-primary" @onclick="Close">
+                            @T["setup.done"]
+                        </button>
+                    }
+                    else
+                    {
+                        <button type="button" class="btn btn-primary" @onclick="InstallEverything">
+                            @T.Format("setup.getAll", Size(Models.RemainingBytes))
+                        </button>
+
+                        <button type="button" class="linkish" @onclick="Close">@T["setup.later"]</button>
+                    }
+                }
+
+                <span class="spacer"></span>
+                <span class="meta mono">@Models.ModelsRoot</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    /// <summary>Raised when the dialog should close.</summary>
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private ElementReference _root;
+
+    protected override void OnInitialized() => Models.Changed += OnModelsChanged;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await _root.FocusAsync();
+        }
+    }
+
+    private void OnModelsChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private Task Close() =>
+        // Closing mid-download would leave a background transfer with no way back to it, so the
+        // dialog holds while one is running. The stop button is the way out.
+        Models.Busy ? Task.CompletedTask : OnClose.InvokeAsync();
+
+    private Task OnKey(KeyboardEventArgs e) =>
+        e.Key == "Escape" ? Close() : Task.CompletedTask;
+
+    private Task Install(CatalogueModel model) => Models.InstallAsync(model);
+
+    private Task InstallEverything() => Models.InstallAllAsync();
+
+    /// <summary>Bytes as something a person can weigh a decision against.</summary>
+    private static string Size(long bytes) =>
+        bytes >= 1024L * 1024 * 1024
+            ? $"{bytes / 1024.0 / 1024 / 1024:F1} GB"
+            : $"{bytes / 1024.0 / 1024:F0} MB";
+
+    public void Dispose() => Models.Changed -= OnModelsChanged;
+}

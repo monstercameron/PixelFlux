@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PixelFlux</title>
+    <base href="/" />
+
+    <!--
+        Content policy. This application is offline by design and nothing it renders should be
+        able to reach the network, so the policy is written as a deny-list of one:
+
+          default-src 'self'          nothing loads from anywhere else
+          img-src ... pixelflux.cache the derivative cache, mapped to a local folder by the
+                                      WebView host (see MainPage.OnWebViewInitialized)
+          style-src 'unsafe-inline'   Blazor writes inline styles for scoped CSS; unavoidable
+          connect-src 'self'          no outbound fetch, ever
+
+        The absence of a font-src entry beyond 'self' is deliberate: the two typefaces are
+        bundled in wwwroot/fonts, and a CDN reference would be blocked rather than silently
+        falling back to a system face.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'self';
+                   img-src 'self' data: https://pixelflux.cache;
+                   style-src 'self' 'unsafe-inline';
+                   font-src 'self';
+                   script-src 'self' 'wasm-unsafe-eval';
+                   connect-src 'self';
+                   base-uri 'self';
+                   form-action 'none';
+                   object-src 'none';
+                   frame-ancestors 'none'" />
+
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="PixelFlux.App.styles.css" />
+    <link rel="icon" href="data:," />
+</head>
+
+<body>
+    <!-- Empty rather than "Loading…": Blazor Hybrid mounts in a few frames off local files, so
+         a flash of placeholder text costs more than it explains. -->
+    <div id="app"></div>
+
+    <div id="blazor-error-ui" data-nosnippet>
+        Something went wrong and the view stopped updating.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">&#x2715;</span>
+    </div>
+
+    <script src="pixelflux.js"></script>
+    <script src="_framework/blazor.webview.js" autostart="false"></script>
+</body>
+</html>

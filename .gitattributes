@@ -1,0 +1,29 @@
+# Normalise line endings on the way in, check out native on the way out.
+#
+# Without this, a repository authored on Windows and cloned on Linux — or the reverse — reports
+# every file as modified before anyone has typed anything, and the first commit anybody makes
+# rewrites files they never opened.
+* text=auto
+
+# Files whose line endings are part of their contract.
+*.sh          text eol=lf
+*.ps1         text eol=crlf
+*.cmd         text eol=crlf
+*.bat         text eol=crlf
+
+# Binary, so git never tries to merge or normalise them.
+*.png         binary
+*.jpg         binary
+*.jpeg        binary
+*.webp        binary
+*.ico         binary
+*.ttf         binary
+*.woff        binary
+*.woff2       binary
+*.bin         binary
+*.onnx        binary
+*.dll         binary
+*.exe         binary
+
+# Tab-separated attribution files: the columns are the format, so a stray conversion matters.
+*.tsv         text eol=lf

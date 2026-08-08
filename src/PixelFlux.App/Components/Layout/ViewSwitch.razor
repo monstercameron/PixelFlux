@@ -1,0 +1,56 @@
+@inject Strings T
+@inject NavigationManager Nav
+
+@*
+    Moves between the two things this library can be looked at as: a sheet of photographs, or a
+    wall of the people in them.
+
+    A segmented control rather than links in a sidebar, because there are two of them and there
+    will not suddenly be nine. It sits in the topbar of both pages, in the same place, so the
+    switch never moves under the pointer.
+*@
+
+<nav class="viewswitch" aria-label="@T["faces.nav.photos"] / @T["faces.nav.faces"]">
+    <button type="button"
+            class="vs @(Current == "photos" ? "on" : null)"
+            aria-current="@(Current == "photos" ? "page" : null)"
+            @onclick="@(() => Go("/"))">@T["faces.nav.photos"]</button>
+
+    <button type="button"
+            class="vs @(Current == "faces" ? "on" : null)"
+            aria-current="@(Current == "faces" ? "page" : null)"
+            @onclick="@(() => Go("/faces"))">
+        @T["faces.nav.faces"]
+        @if (Count > 0)
+        {
+            <span class="pip">@Count</span>
+        }
+    </button>
+</nav>
+
+@code {
+    /// <summary>Which view is showing: <c>photos</c> or <c>faces</c>.</summary>
+    [Parameter, EditorRequired]
+    public string Current { get; set; } = "photos";
+
+    /// <summary>Faces in the library, shown as a count on the tab. Zero hides it.</summary>
+    [Parameter]
+    public int Count { get; set; }
+
+    /// <summary>
+    /// Navigates, doing nothing when already there.
+    /// </summary>
+    /// <remarks>
+    /// The guard matters more than it looks: re-navigating to the current route tears the page
+    /// down and rebuilds it, which on the faces page means re-reading every crop and losing the
+    /// scroll position — a visible flash in return for going nowhere.
+    /// </remarks>
+    private void Go(string route)
+    {
+        string target = route == "/" ? "photos" : "faces";
+        if (!string.Equals(Current, target, StringComparison.Ordinal))
+        {
+            Nav.NavigateTo(route);
+        }
+    }
+}

@@ -1,0 +1,667 @@
+@using System.Globalization
+@using PixelFlux.App.Services
+@using PixelFlux.Core.Imaging
+@using PixelFlux.Core.Model
+@using PixelFlux.Core.Pipeline
+@inject Strings T
+@inject IJSRuntime JS
+@inject PipelineService Pipeline
+@implements IAsyncDisposable
+
+@*
+    One photograph, and the plate that describes it.
+
+    The metadata is set like the spec plate engraved on a lens barrel — monospaced, hairline
+    separated, in a fixed order that never reflows as values appear and disappear. A row of
+    rounded chips would carry the same facts and would look like every other application; a
+    plate reads as an instrument, and holding the column order steady means you learn where to
+    look for the shutter speed and it is always in the same place.
+
+    Values the app inferred rather than read are marked. A date PixelFlux guessed from a file
+    timestamp must never be presented with the same authority as one the camera recorded.
+*@
+
+<div class="viewer" role="dialog" aria-modal="true" aria-label="@Photo.DisplayTitle"
+     tabindex="0" @onkeydown="OnKey" @ref="_root">
+
+    <div class="viewer-stage">
+        @* The wrapper shrink-wraps the rendered image so the overlay can be positioned in
+           percentages of the photograph rather than of the stage. Without it, a portrait photo
+           letterboxed inside a wide stage would have every mask offset by the empty margins. *@
+        @* aspect-ratio, not max-height on the image.
+           The image was sized with `max-height: 100%`, which resolves against .framed — and
+           .framed had an automatic height, so the percentage never resolved and the photograph
+           rendered at its natural size, running off the bottom of the stage and behind the
+           metadata plate. It also meant .framed's box did not match the rendered picture, so the
+           whole mask overlay was positioned against the wrong rectangle.
+           Giving .framed the photograph's own aspect ratio lets the image fill it exactly, so
+           the overlay lines up — but aspect-ratio alone sizes the box from its WIDTH, so a tall
+           or square photograph came out taller than the stage and ran off the bottom. The
+           stylesheet now sizes it from both axes; see .framed in app.css. *@
+        <div class="framed" @ref="_framed" style="--ar:@AspectRatio">
+            <img src="@(LibraryService.DerivativeUrl(Photo.ProxyKey) ?? LibraryService.DerivativeUrl(Photo.ThumbnailKey))"
+                 alt="@Photo.DisplayTitle" />
+
+            @if (ShowMasks && Segments.Count > 0)
+            {
+                <SegmentOverlay Segments="Segments" PersonNames="PersonNames" OnPick="OnPickObject" />
+            }
+        </div>
+
+        @if (HasPrevious)
+        {
+            <button class="viewer-step prev" aria-label="@T["viewer.previous"]"
+                    @onclick="() => OnStep.InvokeAsync(-1)">‹</button>
+        }
+        @if (HasNext)
+        {
+            <button class="viewer-step next" aria-label="@T["viewer.next"]"
+                    @onclick="() => OnStep.InvokeAsync(1)">‹</button>
+        }
+
+        @if (_zoom > 100)
+        {
+            <button class="viewer-zoom" title="@T["viewer.resetZoom"]" @onclick="ResetZoom">
+                @_zoom%
+            </button>
+        }
+
+        @if (Segments.Count > 0)
+        {
+            <button class="viewer-masks @(ShowMasks ? "on" : null)"
+                    title="@(ShowMasks ? T["seg.hide"] : T["seg.show"])"
+                    aria-pressed="@(ShowMasks ? "true" : "false")"
+                    @onclick="() => ShowMasksChanged.InvokeAsync(!ShowMasks)">
+                <span class="glyph" aria-hidden="true">◑</span>
+                <span>@Segments.Count</span>
+            </button>
+        }
+
+        <button class="viewer-close" aria-label="@T["viewer.close"]" @onclick="() => OnClose.InvokeAsync()">✕</button>
+    </div>
+
+    <div class="plate">
+        <div class="plate-group">
+            <span class="k">@T["plate.frame"]</span>
+            <bdi class="v">@Photo.FileName</bdi>
+        </div>
+
+        <div class="plate-group">
+            <span class="k">@(Photo.CaptureTimeIsExact ? T["plate.taken"] : T["plate.filed"])</span>
+            <span class="v @(Photo.CaptureTimeIsExact ? null : "inferred")"
+                  title="@(Photo.CaptureTimeIsExact ? T["plate.fromExif"] : T["plate.fromFile"])">
+                @Photo.CapturedUtc.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture)
+            </span>
+        </div>
+
+        <div class="plate-group">
+            <span class="k">@T["plate.camera"]</span>
+            <bdi class="v @(Photo.Camera.Model is null ? "absent" : null)">
+                @(Photo.Camera.Model ?? "—")
+            </bdi>
+        </div>
+
+        <div class="plate-group">
+            <span class="k">@T["plate.exposure"]</span>
+            <bdi class="v @(Photo.Camera.IsEmpty ? "absent" : null)">@Exposure</bdi>
+        </div>
+
+        <div class="plate-group">
+            <span class="k">@T["plate.size"]</span>
+            <bdi class="v">@Photo.Width×@Photo.Height · @Megapixels · @FileSize</bdi>
+        </div>
+
+        <div class="plate-group">
+            <span class="k">@T["plate.place"]</span>
+            <bdi class="v @(Photo.Location is null ? "absent" : null)">@Place</bdi>
+        </div>
+
+        @* Says nothing when the photograph is fully analysed, which is almost always. A row of
+           four ticks on every photograph is a row of ticks nobody reads; a line that appears only
+           when something is outstanding is a line that means something when it does. *@
+        @if (_pending is { } pending)
+        {
+            <div class="plate-group pending">
+                <span class="k">@T["plate.analysis"]</span>
+                <span class="v">@pending</span>
+            </div>
+        }
+
+        @if (Photo.AiDescription is { Length: > 0 } description)
+        {
+            @* What the vision model read in the picture. Its own column rather than a chip,
+               because it is a paragraph and it is the one part of the plate that says something
+               no other pass could have known — the writing on a sign, the pattern on a chair. *@
+            <div class="plate-group described">
+                <span class="k">@T["plate.described"]</span>
+                <span class="v prose" title="@description">@description</span>
+            </div>
+        }
+
+        @* Hidden when it would only repeat the pending cell. An empty saw-group says "NOT
+           ANALYSED YET / QUEUED", which beside "Read could not run on this photo" is the same
+           news twice in two different wordings — and the two can even disagree, since one is
+           about segments and the other about whichever stage is actually stuck. When there is
+           something to show it shows; when there is not, the pending cell has already said so. *@
+        @if (Segments.Count > 0 || Tags.Count > 0 || _pending is null)
+        {
+        <div class="plate-group saw-group">
+            <span class="k">@(Segments.Count > 0 || Tags.Count > 0 ? T["seg.title"] : T["plate.notAnalysed"])</span>
+            <span class="saw">
+                @if (Segments.Count == 0 && Tags.Count == 0)
+                {
+                    <span class="none">@T["plate.queued"]</span>
+                }
+
+                @* Segments first and clickable: these are things the model located in the
+                   picture, so each one is a way into the rest of the library. Their colour
+                   matches the mask above, which is what connects the two without a legend. *@
+                @foreach (PhotoSegmentRecord segment in Segments.Take(10))
+                {
+                    PhotoSegmentRecord seg = segment;
+
+                    @if (_editingSegment == seg.Id)
+                    {
+                        @* The chip becomes the field, in place. Editing somewhere else on the
+                           screen would break the link between the word and the region it names,
+                           which is the only thing telling the user which one they are fixing. *@
+                        <span class="tag editing" style="--hue:@seg.Hue">
+                            <input type="text"
+                                   list="pf-vocab"
+                                   value="@_draft"
+                                   maxlength="60"
+                                   autofocus
+                                   aria-label="@T["label.rename"]"
+                                   @oninput="e => _draft = e.Value?.ToString() ?? string.Empty"
+                                   @onkeydown="e => OnLabelKey(e, seg)"
+                                   @onblur="() => CommitLabel(seg)" />
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="tag seen @(seg.IsCorrected ? "mine" : null)" style="--hue:@seg.Hue">
+                            <button type="button" class="tagmain"
+                                    title="@T.Format("seg.findAll", seg.DisplayLabel)"
+                                    @onclick="() => OnPickObject.InvokeAsync(seg.DisplayLabel)">
+                                <span class="dot" aria-hidden="true"></span>@Shown(seg)
+                            </button>
+
+                            @* A separate hit target, so the common action stays one plain click
+                               and correcting a label never happens by accident. *@
+                            <button type="button" class="tagedit"
+                                    title="@T["label.rename"]"
+                                    aria-label="@T["label.rename"]"
+                                    @onclick="() => BeginEdit(seg)">✎</button>
+                        </span>
+                    }
+                }
+
+                @* Then keywords that came from the file or the user but were not located in the
+                   picture — still useful, but a different kind of claim. *@
+                @foreach (PhotoTag tag in Tags.Where(t => !Segments.Any(
+                              g => string.Equals(g.DisplayLabel, t.Tag, StringComparison.OrdinalIgnoreCase))).Take(8))
+                {
+                    PhotoTag one = tag;
+
+                    <span class="tag @(one.Source == MetadataSource.User ? "mine" : null)">
+                        @one.Tag
+                        @if (one.Source == MetadataSource.User)
+                        {
+                            @* Only the user's own words can be taken back. A model tag would be
+                               written straight back by the next analysis, so offering to remove
+                               it would be offering something the application cannot honour. *@
+                            <button type="button" class="tagx"
+                                    title="@T["label.remove"]"
+                                    aria-label="@T["label.remove"]"
+                                    @onclick="() => RemoveTag(one.Tag)">✕</button>
+                        }
+                    </span>
+                }
+
+            </span>
+
+            @* Outside the scrolling strip, so it is in the same place whether the photograph has
+               two tags or thirty. Inside it, the one control that adds a tag drifted off the
+               right-hand edge exactly as the list got long enough to need it. *@
+            @if (_addingTag)
+            {
+                <span class="tag editing mine addpin">
+                    <input type="text"
+                           list="pf-vocab"
+                           value="@_draft"
+                           maxlength="60"
+                           autofocus
+                           aria-label="@T["label.add"]"
+                           @oninput="e => _draft = e.Value?.ToString() ?? string.Empty"
+                           @onkeydown="OnNewTagKey"
+                           @onblur="CommitNewTag" />
+                </span>
+            }
+            else
+            {
+                <button type="button" class="tag add addpin" title="@T["label.add"]"
+                        aria-label="@T["label.add"]"
+                        @onclick="BeginAddTag">＋</button>
+            }
+
+            @* Words already used in this library, offered as completions. Populated from the
+               library rather than a dictionary — see LibraryService.LabelVocabularyAsync. *@
+            <datalist id="pf-vocab">
+                @foreach (string word in Vocabulary)
+                {
+                    <option value="@word"></option>
+                }
+            </datalist>
+        </div>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>The photograph being shown.</summary>
+    [Parameter, EditorRequired]
+    public PhotoRecord Photo { get; set; } = null!;
+
+    /// <summary>Tags attached to it.</summary>
+    [Parameter]
+    public IReadOnlyList<PhotoTag> Tags { get; set; } = [];
+
+    /// <summary>Regions the model located in this photograph, most prominent first.</summary>
+    [Parameter]
+    public IReadOnlyList<PhotoSegmentRecord> Segments { get; set; } = [];
+
+    /// <summary>Raised when a detected object is clicked, to filter the library to it.</summary>
+    [Parameter]
+    public EventCallback<string> OnPickObject { get; set; }
+
+    /// <summary>Words already used in this library, offered while typing a label.</summary>
+    [Parameter]
+    public IReadOnlyList<string> Vocabulary { get; set; } = [];
+
+    /// <summary>Raised to set, or clear, what the user calls one region.</summary>
+    [Parameter]
+    public EventCallback<(long SegmentId, string? Label)> OnLabelSegment { get; set; }
+
+    /// <summary>Raised to attach a keyword the user typed.</summary>
+    [Parameter]
+    public EventCallback<string> OnAddTag { get; set; }
+
+    /// <summary>Raised to remove a keyword the user typed.</summary>
+    [Parameter]
+    public EventCallback<string> OnRemoveTag { get; set; }
+
+    /// <summary>Whether there is a previous photo in the current sheet.</summary>
+    [Parameter]
+    public bool HasPrevious { get; set; }
+
+    /// <summary>Whether there is a next photo in the current sheet.</summary>
+    [Parameter]
+    public bool HasNext { get; set; }
+
+    /// <summary>Raised when the viewer should close.</summary>
+    [Parameter]
+    public EventCallback OnClose { get; set; }
+
+    /// <summary>Raised to move by a relative offset, -1 or +1.</summary>
+    [Parameter]
+    public EventCallback<int> OnStep { get; set; }
+
+    /// <summary>
+    /// Whether the mask overlay is showing.
+    /// </summary>
+    /// <remarks>
+    /// Owned by the gallery rather than by this component, so it survives closing one photograph
+    /// and opening another. It was local state, and every navigation quietly switched the
+    /// overlay back off — turning a setting into something you had to re-assert on every image.
+    /// A toggle should stay where the user put it.
+    /// </remarks>
+    [Parameter]
+    public bool ShowMasks { get; set; }
+
+    /// <summary>Raised when the overlay is toggled.</summary>
+    [Parameter]
+    public EventCallback<bool> ShowMasksChanged { get; set; }
+
+    private ElementReference _root;
+
+    /// <summary>The region being renamed, or null.</summary>
+    private long? _editingSegment;
+
+    /// <summary>Whether the new-keyword field is open.</summary>
+    private bool _addingTag;
+
+    /// <summary>What is currently typed into whichever field is open.</summary>
+    /// <remarks>
+    /// One field is open at a time, so one draft is enough — and sharing it makes it impossible
+    /// to leave a half-typed correction behind on a chip the user has moved away from.
+    /// </remarks>
+    private string _draft = string.Empty;
+    private ElementReference _framed;
+    private DotNetObjectReference<Viewer>? _self;
+    private long _attachedTo = -1;
+    private int _zoom = 100;
+
+    /// <summary>
+    /// Names for the person outlines a named face was matched to, by segment id.
+    /// </summary>
+    [Parameter]
+    public IReadOnlyDictionary<long, string> PersonNames { get; set; } =
+        new Dictionary<long, string>();
+
+    /// <summary>What to write on a segment's chip: a matched name, else the model's label.</summary>
+    private string Shown(PhotoSegmentRecord segment) =>
+        PersonNames.TryGetValue(segment.Id, out string? name) ? name : segment.DisplayLabel;
+
+    private string? _pending;
+    private long _pendingFor = -1;
+
+    /// <summary>
+    /// Reads why this photograph is not finished, if it is not.
+    /// </summary>
+    /// <remarks>
+    /// Keyed on the photograph so paging through a gallery does not re-query the same row: the
+    /// viewer's parameters are set on every render of its parent, and this is a database round
+    /// trip.
+    /// </remarks>
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Photo is null || Photo.Id == _pendingFor)
+        {
+            return;
+        }
+
+        _pendingFor = Photo.Id;
+        _pending = null;
+
+        IReadOnlyList<(PipelineStage Stage, JobState State, string? Error)> stages =
+            await Pipeline.ForPhotoAsync(Photo.Id);
+
+        // The worst news first, and only one line of it. Somebody looking at a photograph that has
+        // no description wants to know whether to wait or to give up, not an audit of four stages.
+        if (stages.FirstOrDefault(entry => entry.State == JobState.Skipped) is { Stage: var stuck, State: JobState.Skipped })
+        {
+            _pending = T.Format("plate.analysisStuck", T[$"analysis.stage.{stuck.Slug()}"]);
+            return;
+        }
+
+        var waiting = stages
+            .Where(entry => entry.State is JobState.Pending or JobState.Running or JobState.Failed)
+            .Select(entry => T[$"analysis.stage.{entry.Stage.Slug()}"])
+            .ToArray();
+
+        if (waiting.Length > 0)
+        {
+            _pending = T.Format("plate.analysisWaiting", string.Join(", ", waiting));
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Focus the dialog so arrow keys and Escape work the moment it opens, without the
+            // user having to click the image first.
+            await _root.FocusAsync();
+        }
+
+        // Re-attach whenever the photograph changes, which also resets the zoom.
+        //
+        // Blazor reuses this component instance when only the Photo parameter changes, so
+        // without this check the handlers would be bound once and every subsequent photo would
+        // inherit the previous one's pan offset — arriving already scrolled into a corner.
+        if (_attachedTo != Photo.Id)
+        {
+            _attachedTo = Photo.Id;
+            _self ??= DotNetObjectReference.Create(this);
+            _zoom = 100;
+            await JS.InvokeVoidAsync("pixelflux.zoom.attach", _framed, _self);
+        }
+    }
+
+    /// <summary>Called from JavaScript as the zoom changes, to keep the readout honest.</summary>
+    /// <param name="percent">Current zoom, as a percentage.</param>
+    [JSInvokable]
+    public Task OnZoomChanged(int percent)
+    {
+        if (_zoom == percent)
+        {
+            return Task.CompletedTask;
+        }
+
+        _zoom = percent;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private Task ResetZoom() => JS.InvokeVoidAsync("pixelflux.zoom.reset").AsTask();
+
+    /// <summary>Detaches the gesture handlers and releases the interop reference.</summary>
+    /// <returns>A task that completes once the handlers are gone.</returns>
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("pixelflux.zoom.detach");
+        }
+        catch (JSDisconnectedException)
+        {
+            // The WebView is already gone; there is nothing left to detach from.
+        }
+
+        _self?.Dispose();
+    }
+
+    private async Task OnKey(KeyboardEventArgs args)
+    {
+        // While a label field is open, the viewer's single-key shortcuts are off. They are bound
+        // on the dialog root and keystrokes from the input bubble up to it, so typing the word
+        // "zoom" into a label would reset the zoom on the "0" and toggle the masks on the "m".
+        // Escape is swallowed here too: the field's own handler has already cancelled the edit,
+        // and letting it through would close the photograph in the same press.
+        if (_editingSegment is not null || _addingTag)
+        {
+            return;
+        }
+
+        switch (args.Key)
+        {
+            case "+" or "=":
+                await JS.InvokeVoidAsync("pixelflux.zoom.step", 1.25);
+                break;
+            case "-" or "_":
+                await JS.InvokeVoidAsync("pixelflux.zoom.step", 0.8);
+                break;
+            case "0":
+                await ResetZoom();
+                break;
+            case "m" or "M" when Segments.Count > 0:
+                await ShowMasksChanged.InvokeAsync(!ShowMasks);
+                break;
+            case "Escape" when _zoom > 100:
+                await ResetZoom();
+                break;
+            case "Escape":
+                await OnClose.InvokeAsync();
+                break;
+            case "ArrowLeft" when HasPrevious:
+                await OnStep.InvokeAsync(-1);
+                break;
+            case "ArrowRight" when HasNext:
+                await OnStep.InvokeAsync(1);
+                break;
+        }
+    }
+
+    private string Exposure
+    {
+        get
+        {
+            if (Photo.Camera.IsEmpty)
+            {
+                return "—";
+            }
+
+            // Written in the order a photographer reads it off a camera: focal length, aperture,
+            // shutter, ISO. Absent components are dropped rather than shown as blanks.
+            var parts = new List<string>(4);
+
+            if (Photo.Camera.FocalLengthMm is { } focal)
+            {
+                parts.Add($"{focal.ToString("0.#", CultureInfo.InvariantCulture)}mm");
+            }
+
+            if (Photo.Camera.FNumber is { } aperture)
+            {
+                parts.Add($"f/{aperture.ToString("0.#", CultureInfo.InvariantCulture)}");
+            }
+
+            if (ExifExtractor.FormatShutter(Photo.Camera.ExposureSeconds) is { } shutter)
+            {
+                parts.Add(shutter);
+            }
+
+            if (Photo.Camera.Iso is { } iso)
+            {
+                parts.Add($"ISO {iso.ToString(CultureInfo.InvariantCulture)}");
+            }
+
+            return parts.Count > 0 ? string.Join("  ", parts) : "—";
+        }
+    }
+
+    /// <summary>
+    /// The photograph's aspect ratio as a CSS value.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Emitted as a plain NUMBER, not as "w / h". The stylesheet has to multiply it by the
+    /// stage height to work out how wide the picture may be, and arithmetic cannot be done on a
+    /// ratio literal — <c>calc(100cqh * (1133 / 1600))</c> is valid but <c>aspect-ratio</c>
+    /// accepts both forms, so one value serves both uses only if it is a number.
+    /// </para>
+    /// <para>
+    /// Falls back to 1.5 when the dimensions are unknown, which happens for a file that could
+    /// not be decoded. Without a fallback the CSS is invalid and the frame collapses.
+    /// </para>
+    /// </remarks>
+    private string AspectRatio => Photo.Width > 0 && Photo.Height > 0
+        ? (Photo.Width / (double)Photo.Height).ToString("0.#####", CultureInfo.InvariantCulture)
+        : "1.5";
+
+    // ------------------------------------------------------------------------- labelling
+
+    /// <summary>Opens the rename field on one region.</summary>
+    private void BeginEdit(PhotoSegmentRecord segment)
+    {
+        _addingTag = false;
+        _editingSegment = segment.Id;
+
+        // Seeded with what it is called now, so correcting "truck" to "car" is a small edit
+        // rather than retyping, and so the field never opens empty on a chip that has a name.
+        _draft = segment.DisplayLabel;
+    }
+
+    private void BeginAddTag()
+    {
+        _editingSegment = null;
+        _addingTag = true;
+        _draft = string.Empty;
+    }
+
+    private void CancelEdit()
+    {
+        _editingSegment = null;
+        _addingTag = false;
+        _draft = string.Empty;
+    }
+
+    /// <summary>Enter commits, Escape abandons.</summary>
+    /// <remarks>
+    /// Escape is handled here and not allowed to reach the viewer's own Escape handling, or one
+    /// press would abandon the edit and close the photograph at the same time.
+    /// </remarks>
+    private async Task OnLabelKey(KeyboardEventArgs args, PhotoSegmentRecord segment)
+    {
+        if (args.Key == "Enter")
+        {
+            await CommitLabel(segment);
+        }
+        else if (args.Key == "Escape")
+        {
+            CancelEdit();
+        }
+    }
+
+    private async Task OnNewTagKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await CommitNewTag();
+        }
+        else if (args.Key == "Escape")
+        {
+            CancelEdit();
+        }
+    }
+
+    /// <summary>Saves a corrected region name.</summary>
+    /// <remarks>
+    /// Clearing the field puts the model's own word back rather than leaving the region nameless.
+    /// A blank label would be a region you cannot search for and cannot see the name of, which
+    /// is worse than a wrong one — and "undo my correction" is a thing people will want.
+    /// </remarks>
+    private async Task CommitLabel(PhotoSegmentRecord segment)
+    {
+        if (_editingSegment != segment.Id)
+        {
+            return;
+        }
+
+        string typed = _draft.Trim();
+        _editingSegment = null;
+        _draft = string.Empty;
+
+        // Unchanged, or cleared on a region nobody had corrected: nothing to write.
+        if (string.Equals(typed, segment.DisplayLabel, StringComparison.Ordinal) ||
+            (typed.Length == 0 && !segment.IsCorrected))
+        {
+            return;
+        }
+
+        await OnLabelSegment.InvokeAsync((segment.Id, typed.Length == 0 ? null : typed));
+    }
+
+    private async Task CommitNewTag()
+    {
+        string typed = _draft.Trim();
+        _addingTag = false;
+        _draft = string.Empty;
+
+        if (typed.Length > 0)
+        {
+            await OnAddTag.InvokeAsync(typed);
+        }
+    }
+
+    private Task RemoveTag(string tag) => OnRemoveTag.InvokeAsync(tag);
+
+    private string Megapixels =>
+        (Photo.Width * (long)Photo.Height / 1_000_000d).ToString("0.#", CultureInfo.InvariantCulture) + " MP";
+
+    private string FileSize => Photo.FileSize switch
+    {
+        >= 1024 * 1024 => (Photo.FileSize / 1024d / 1024d).ToString("0.#", CultureInfo.InvariantCulture) + " MB",
+        >= 1024 => (Photo.FileSize / 1024d).ToString("0", CultureInfo.InvariantCulture) + " KB",
+        _ => Photo.FileSize.ToString(CultureInfo.InvariantCulture) + " B",
+    };
+
+    /// <summary>
+    /// Where the photograph was taken, as a place name.
+    /// </summary>
+    /// <remarks>
+    /// Never coordinates. "52.398 N 0.262 E" is not an answer to "where was this taken" — it is
+    /// the question restated in numbers. The name is resolved once at import against the
+    /// gazetteer embedded in the application, so this costs nothing at render time and needs no
+    /// network call.
+    /// </remarks>
+    private string Place => Photo.Place?.Label ?? "\u2014";
+}
