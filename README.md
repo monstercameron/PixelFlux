@@ -1,6 +1,11 @@
 # PixelFlux
 
-**Search your photographs by what is in them, on a laptop, with nothing leaving the machine.**
+**Find meaning in every photo.**
+
+Search your photographs by what is in them, on a laptop, with nothing leaving the machine.
+
+→ **[Read the case study](https://www.earlcameron.com/projects/pixelflux)** — what it does, what it
+is built on, what was hard, and how finished it honestly is.
 
 ![The contact sheet](docs/images/gallery.jpg)
 
