@@ -1,0 +1,36 @@
+name: 💡 Feature request
+description: Suggest something PixelFlux should do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        PixelFlux is a prototype built in spare time, so the honest answer to a lot of good ideas
+        is "not soon". Filing it anyway is still useful — it records the idea and who wanted it.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task, not the solution. What are you trying to find, or learn about your library?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: Your suggested change, if you have one in mind.
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Does it hold the line?
+      description: >
+        Two properties are load-bearing and a feature that breaks either one will be declined
+        regardless of how useful it is.
+      options:
+        - label: It does not require a network request. The first-run model download is the only one PixelFlux makes, and the content security policy forbids the rest.
+        - label: It does not require a photograph or its metadata to leave the machine.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: The workaround, if there is one. This is often the most useful field.

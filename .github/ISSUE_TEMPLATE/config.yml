@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 Honest limitations
+    url: https://github.com/monstercameron/PixelFlux#honest-limitations
+    about: Windows only, arm64 tested, the vision model is sometimes wrong, faces are appearance not identity, no sync. Check here before filing.
+  - name: 🧪 Tests fail on a fresh clone, and that is documented
+    url: https://github.com/monstercameron/PixelFlux#tests
+    about: About a third of the 207 tests do real inference and ten need the photograph corpus. Fetch them, or filter, before reporting a failing suite.
+  - name: 🔒 Report a security or privacy issue
+    url: https://github.com/monstercameron/PixelFlux/security/advisories/new
+    about: Anything where PixelFlux makes a request it should not, writes outside its data directory, or exposes a library. Report privately — never open a public issue.

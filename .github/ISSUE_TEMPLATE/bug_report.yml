@@ -1,0 +1,78 @@
+name: 🐛 Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report.
+
+        **Please read [Honest limitations](https://github.com/monstercameron/PixelFlux#honest-limitations) first.**
+        Several things that look like bugs are documented decisions — the vision model inventing
+        detail it did not see, face grouping being appearance rather than identity, Windows being
+        the only tested platform.
+
+        **Never attach real photographs or a real library database.** The test corpus reproduces
+        almost everything.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open '...'
+        2. Search for '...'
+        3. See '...'
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - Search
+        - The analysis queue (describe / segment / detect / embed)
+        - Faces and people
+        - Viewer
+        - Contact sheet / gallery
+        - First-run model download
+        - Command line
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      description: arm64 is the tested target; x64 builds and passes but gets far less use.
+      options:
+        - Windows arm64
+        - Windows x64
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: Build
+      placeholder: commit hash, tag, or "built from main on <date>"
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Numbers, if this is about speed or accuracy
+      description: >
+        Nearly every decision in this project came from a measurement contradicting the obvious
+        guess. If you are reporting that something is slow or wrong, the timings or the
+        precision figures — and the command that produced them — are the useful part.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Strip personal paths before pasting.
+      render: shell
