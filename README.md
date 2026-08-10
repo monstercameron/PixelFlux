@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="design/branding/pixelflux-poster.webp" alt="PixelFlux — find meaning in every photo" width="820">
+</p>
+
 # PixelFlux
 
 **Find meaning in every photo.**
